@@ -260,7 +260,6 @@ class ZimWikiSource implements WikiSource {
   /// flutter_html's CSS engine can".
   Future<String> _inlineStylesheets(String html, String basePath) async {
     final matches = _stylesheetLinkRe.allMatches(html).toList();
-    if (matches.isEmpty) return html;
     final buffer = StringBuffer();
     var lastEnd = 0;
     for (final m in matches) {
@@ -277,7 +276,30 @@ class ZimWikiSource implements WikiSource {
         ..write('</style>');
     }
     buffer.write(html.substring(lastEnd));
-    return buffer.toString();
+    return _stripBackgroundDeclarations(buffer.toString());
+  }
+
+  static final _styleBlockRe = RegExp(r'(<style\b[^>]*>)([\s\S]*?)(</style>)', caseSensitive: false);
+  static final _backgroundDeclRe = RegExp(r'background(-color)?\s*:\s*[^;{}]+;?', caseSensitive: false);
+
+  /// Real .zim pages routinely set a full-bleed dark `background` on
+  /// generic layout wrapper elements (verified: a Wikipedia mobile
+  /// main-page layout paints `#container`/`#content` solid black,
+  /// expecting a real browser's viewport-filling body underneath) --
+  /// applied inside flutter_html's much simpler box model, that reliably
+  /// painted over the reader's own theme with nothing else compensating,
+  /// making entire pages look blank. Reader mode doesn't need page-authored
+  /// backgrounds at all (only text/border/link colors matter for
+  /// readability), so this strips every `background`/`background-color`
+  /// declaration from every `<style>` block -- covers both stylesheets just
+  /// inlined by [_inlineStylesheets] above and any the page's own HTML
+  /// already had inline (e.g. Wikipedia's per-template "TemplateStyles"
+  /// blocks).
+  String _stripBackgroundDeclarations(String html) {
+    return html.replaceAllMapped(_styleBlockRe, (m) {
+      final cleaned = m.group(2)!.replaceAll(_backgroundDeclRe, '');
+      return '${m.group(1)}$cleaned${m.group(3)}';
+    });
   }
 
   /// Fetches a non-HTML asset (image, CSS, ...) referenced from within a

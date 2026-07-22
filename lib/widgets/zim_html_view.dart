@@ -66,17 +66,40 @@ class ZimHtmlView extends StatelessWidget {
                 return FutureBuilder(
                   future: source.loadAsset(resolved),
                   builder: (context, snapshot) {
+                    // A zero-size (or invisible) placeholder here, combined
+                    // with a page whose own CSS paints a dark full-bleed
+                    // background (real .zim pages do this -- see the
+                    // "nothing renders" bug this was fixed for), makes a
+                    // whole image grid look like a blank black rectangle
+                    // instead of "images still loading/unavailable". A
+                    // visible placeholder box means something always
+                    // renders even when an image never resolves.
                     if (snapshot.connectionState != ConnectionState.done || snapshot.data == null) {
-                      return const SizedBox(width: 1, height: 1);
+                      return Container(width: 48, height: 48, color: Theme.of(context).cardColor);
                     }
-                    return Image.memory(snapshot.data!, errorBuilder: (_, __, ___) => const SizedBox.shrink());
+                    return Image.memory(
+                      snapshot.data!,
+                      errorBuilder: (_, __, ___) =>
+                          Container(width: 48, height: 48, color: Theme.of(context).cardColor),
+                    );
                   },
                 );
               },
             ),
           ],
           style: {
-            'body': Style(color: Theme.of(context).appColors.foreground),
+            'body': Style(color: Theme.of(context).appColors.foreground, backgroundColor: Colors.transparent),
+            'html': Style(backgroundColor: Colors.transparent),
+            // Real .zim pages (verified: a Wikipedia mobile-main-page
+            // layout) set a full-bleed dark `background` on generic layout
+            // wrapper ids expecting a real browser's viewport-filling body
+            // -- without that, it just paints over the reader's own
+            // background/text with nothing else compensating, and the page
+            // looks blank. flutter_html applies these custom style entries
+            // AFTER the page's own CSS (html_parser.dart's styleTree merges
+            // "custom styles" last), so this reliably wins.
+            '#container': Style(backgroundColor: Colors.transparent),
+            '#content': Style(backgroundColor: Colors.transparent),
             'a': Style(color: Theme.of(context).colorScheme.primary),
             'pre': Style(
               backgroundColor: Theme.of(context).cardColor,
@@ -89,7 +112,8 @@ class ZimHtmlView extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.only(top: 16),
           child: Text(
-            "This page's own stylesheet/scripts aren't applied -- reader-mode rendering only.",
+            'Reader-mode rendering: close to the real page, not pixel-identical -- complex layouts '
+            '(tables, multi-column grids) may look plainer than in a full browser.',
             style: TextStyle(fontSize: 11, color: muted, fontStyle: FontStyle.italic),
           ),
         ),
