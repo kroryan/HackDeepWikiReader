@@ -449,6 +449,16 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
   }
 
   void _showHistorySheet(BuildContext context, ChatProvider chat) {
+    // On Linux the open .zim page is a real native WebKitGTK widget layered
+    // above ALL Flutter painting (see third_party/webview_all_linux), and
+    // only the chat panel's own reserved strip accounts for it -- a bottom
+    // sheet is full window width, so without this the native widget just
+    // keeps covering whatever part of the sheet falls outside that strip,
+    // same underlying issue useRootNavigator alone doesn't touch. Captured
+    // once up front (not re-read via context after the await below) and
+    // cleared in .whenComplete regardless of how the sheet closes.
+    final overlay = context.read<ChatOverlayController>();
+    overlay.setModalOpen(true);
     showModalBottomSheet(
       context: context,
       // The chat panel lives inside its OWN small private Navigator (see
@@ -486,7 +496,7 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
           ),
         );
       },
-    );
+    ).whenComplete(() => overlay.setModalOpen(false));
   }
 
   Widget _buildComposer(BuildContext context, ChatProvider chat) {

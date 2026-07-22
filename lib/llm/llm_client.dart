@@ -34,10 +34,26 @@ abstract class LlmClient {
   /// own backend routes it to a separate "Process" panel for the same
   /// reason (see api/agent_loop.py's thinking_sink). Providers with no
   /// concept of a separate reasoning channel simply never call it.
+  ///
+  /// [allowToolCalling] mirrors context_builder.dart's buildSystemPrompt
+  /// param of the same name (pass the same value) -- it does NOT change
+  /// whether the textual `SEARCH_WIKI: <query>` convention is honored
+  /// (every provider always gets that from the system prompt), it exists so
+  /// a provider whose model was itself trained on native structured tool-
+  /// calling can ALSO be given a real, matching tool schema. Confirmed live
+  /// against Ollama's gpt-oss: with no schema at all, seeing the plain-text
+  /// "SEARCH_WIKI:" convention alone was enough for the model to spontaneously
+  /// respond with Ollama's native `tool_calls` field instead of the plain
+  /// text line the prompt asked for -- and since nothing constrained the
+  /// argument shape, it invented a different, unpredictable key name on
+  /// every single call (a JSON object like `{"payload": "..."}` one time, something else the
+  /// next), making the query fundamentally unrecoverable by guessing. A
+  /// provider that never does this unprompted can just ignore the flag.
   Stream<String> streamChat({
     required String? systemPrompt,
     required List<ChatMessage> messages,
     void Function(String delta)? onThinking,
+    bool allowToolCalling = true,
   });
 
   /// Lists model ids this connection's base URL/credentials can serve right

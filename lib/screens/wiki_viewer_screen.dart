@@ -90,6 +90,7 @@ class _WikiViewerScreenState extends State<WikiViewerScreen> {
     final hideLinuxWebView =
         linuxZim &&
         (_drawerOpen ||
+            overlay.modalOpen ||
             (currentChatOpen &&
                 (overlay.isMaximized || !canShowWebViewBesideChat)));
     // WebKitGTK is a native sibling above Flutter. Leave it visible beside

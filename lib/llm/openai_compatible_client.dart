@@ -25,6 +25,7 @@ class OpenAiCompatibleLlmClient implements LlmClient {
     required String? systemPrompt,
     required List<ChatMessage> messages,
     void Function(String delta)? onThinking,
+    bool allowToolCalling = true,
   }) async* {
     if (apiKey.isEmpty) {
       throw LlmClientException('No API key configured for this connection. Add one in Settings.');

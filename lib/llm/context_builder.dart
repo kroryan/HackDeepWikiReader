@@ -33,6 +33,19 @@ const _maxFindingsInPrompt = 25;
 /// 100% of this app's providers with one code path. See
 /// ChatProvider._sendRound for where a `SEARCH_WIKI:` response is
 /// intercepted instead of shown to the user.
+///
+/// The last two sentences are load-bearing, not just style -- an earlier
+/// version of this prompt was missing them (paraphrased instead of copied
+/// verbatim from api/prompts.py's TOOL_CALLING_INSTRUCTIONS) and a
+/// reasoning-heavy model (confirmed live: Ollama's gpt-oss, which has its
+/// OWN native tool-calling training this textual convention doesn't line
+/// up with) would sometimes reason about whether to search, get stuck
+/// deciding how, and end its turn having emitted nothing at all -- no
+/// error, just silence. The web backend's prompt explicitly forbids that
+/// outcome ("don't mention tools at all -- just answer with what you
+/// have", "answer with whatever you found rather than leaving the user
+/// with nothing"); this app's own textual protocol needs the exact same
+/// guardrail, since it hits the exact same class of model.
 const toolCallingInstructions = '''
 ## Tools
 
@@ -42,6 +55,8 @@ To use it, your ENTIRE response must be exactly one line, nothing else:
 SEARCH_WIKI: <search query>
 
 Do not narrate that you're searching ("Let me look that up...") -- either answer directly, or emit only that one line and nothing else. You'll get the results back and can then answer, search again (up to a few times), or say you couldn't find it. Don't call the tool for things already covered by the context already given to you below.
+
+If you're not going to emit the exact "SEARCH_WIKI: ..." line, don't mention tools at all -- just answer with what you have. Stop searching and answer as soon as you have enough information; do not keep searching just because you still have rounds left. If you reach the round limit without a perfect answer, answer with whatever you found rather than leaving the user with nothing -- an incomplete answer is always better than no answer.
 ''';
 
 String buildSystemPrompt({
@@ -120,6 +135,19 @@ String buildSystemPrompt({
 
   if (allowToolCalling && structure.pages.isNotEmpty) {
     buffer.writeln(toolCallingInstructions);
+  } else if (!allowToolCalling && structure.pages.isNotEmpty) {
+    // Mirrors api/agent_loop.py's is_last_round note -- without an explicit
+    // instruction, simply omitting the tool block leaves the model to
+    // infer on its own that it can't search anymore, which a reasoning
+    // model can spend its whole turn puzzling over instead of just
+    // answering (see toolCallingInstructions' doc for the related, more
+    // common failure this app hit).
+    buffer.writeln(
+      'You have used all available searches for this answer. Answer now '
+      'using the information already gathered -- do not request another '
+      'search.',
+    );
+    buffer.writeln();
   }
 
   if (includeSecurityContext) {

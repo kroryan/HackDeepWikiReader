@@ -28,12 +28,33 @@ class ChatOverlayController extends ChangeNotifier {
   ChatProvider? _chatProvider;
   bool _open = false;
   bool _maximized = false;
+  // True while a full-screen-ish overlay grown OUT of the chat panel is
+  // showing (currently: the chat history bottom sheet) -- see
+  // wiki_viewer_screen.dart's hideLinuxWebView, which is the only reader of
+  // this. On Linux the .zim page is a real native WebKitGTK widget layered
+  // above ALL of Flutter's own painting (see
+  // third_party/webview_all_linux's plugin doc), so any Flutter overlay
+  // that isn't accounted for by the chat panel's own reserved strip --
+  // like a bottom sheet, which is full window width -- gets silently
+  // painted over by whatever of that native widget is still visible,
+  // exactly the same underlying issue the chat panel itself needed fixing
+  // for. Nothing analogous is needed on Android/Windows: their WebView
+  // widgets render as a normal Flutter Texture, so Flutter's own paint
+  // order already puts any overlay on top correctly.
+  bool _modalOpen = false;
 
   WikiSource? get source => _source;
   ChatProvider? get chatProvider => _chatProvider;
   bool get isOpen => _open;
   bool get isMaximized => _maximized;
   bool get hasSession => _chatProvider != null;
+  bool get modalOpen => _modalOpen;
+
+  void setModalOpen(bool value) {
+    if (_modalOpen == value) return;
+    _modalOpen = value;
+    notifyListeners();
+  }
 
   void openFor(WikiSource newSource, {String? currentPageId}) {
     AppLogger.instance.info('openFor sourceId=${newSource.sourceId} '

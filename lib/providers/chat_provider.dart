@@ -393,6 +393,7 @@ class ChatProvider extends ChangeNotifier {
         .streamChat(
           systemPrompt: systemPrompt,
           messages: messages,
+          allowToolCalling: allowToolSniffing,
           onThinking: (delta) {
             _thinkingBuffer += delta;
             notifyListeners();

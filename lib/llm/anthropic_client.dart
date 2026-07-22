@@ -44,6 +44,7 @@ class AnthropicLlmClient implements LlmClient {
     required String? systemPrompt,
     required List<ChatMessage> messages,
     void Function(String delta)? onThinking,
+    bool allowToolCalling = true,
   }) async* {
     if (apiKey.isEmpty) {
       throw LlmClientException(
