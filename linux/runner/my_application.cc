@@ -48,6 +48,26 @@ static void my_application_activate(GApplication* application) {
   }
 
   gtk_window_set_default_size(window, 1280, 720);
+
+  // Window/taskbar icon -- the same HackDeepWiki logo bundled as a Flutter
+  // asset (assets/icon/hackdeepwiki.png, also used to generate the Android
+  // and Windows launcher icons; see pubspec.yaml's flutter_launcher_icons
+  // config). flutter_launcher_icons doesn't support Linux, so this is set
+  // by hand from /proc/self/exe rather than argv[0]/cwd, since the binary
+  // can be launched via any relative path, an absolute path, or PATH
+  // lookup, and the icon must be found relative to the installed bundle
+  // either way (bundle/data/flutter_assets/... next to bundle/<binary>).
+  g_autofree gchar* exe_path = g_file_read_link("/proc/self/exe", nullptr);
+  if (exe_path != nullptr) {
+    g_autofree gchar* exe_dir = g_path_get_dirname(exe_path);
+    g_autofree gchar* icon_path = g_build_filename(
+        exe_dir, "data", "flutter_assets", "assets", "icon", "hackdeepwiki.png", nullptr);
+    g_autoptr(GError) icon_error = nullptr;
+    if (!gtk_window_set_icon_from_file(window, icon_path, &icon_error)) {
+      g_warning("Failed to set window icon from %s: %s", icon_path, icon_error->message);
+    }
+  }
+
   gtk_widget_show(GTK_WIDGET(window));
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();

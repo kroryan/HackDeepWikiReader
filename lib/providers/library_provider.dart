@@ -37,11 +37,21 @@ class LibraryProvider extends ChangeNotifier {
   }
 
   Future<void> checkConnection(Endpoint endpoint) async {
-    final client = HackDeepWikiClient(endpoint);
-    final ok = await client.testConnection();
-    client.close();
+    final ok = await testConnectionFor(endpoint);
     _connectionStatus[endpoint.id] = ok;
     notifyListeners();
+  }
+
+  /// One-off connectivity check that doesn't touch saved state -- used by
+  /// the "Test connection" button on the add/edit form, against a draft
+  /// endpoint that may not be saved (or even valid) yet.
+  Future<bool> testConnectionFor(Endpoint endpoint) async {
+    final client = HackDeepWikiClient(endpoint);
+    try {
+      return await client.testConnection();
+    } finally {
+      client.close();
+    }
   }
 
   Future<Endpoint> addEndpoint(String name, String baseUrl) async {

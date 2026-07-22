@@ -7,8 +7,14 @@ gradle-wrapper.jar
 GeneratedPluginRegistrant.java
 .cxx/
 
-# Remember to never publicly share your keystore.
+# Remember to never publicly share your REAL (Play Store upload) keystore.
 # See https://flutter.dev/to/reference-keystore
 key.properties
 **/*.keystore
 **/*.jks
+
+# ci-installer-key.jks is the exception: a throwaway, non-secret signing key
+# (fixed well-known password, committed on purpose) used only so CI-built
+# APKs/AABs are installable and upgradeable across releases when no real
+# Play Store keystore is configured -- see android/app/build.gradle.kts.
+!app/ci-installer-key.jks

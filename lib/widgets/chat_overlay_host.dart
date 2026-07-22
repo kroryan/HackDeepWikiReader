@@ -1,0 +1,456 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:provider/provider.dart';
+
+import '../models/chat_models.dart';
+import '../navigation.dart';
+import '../providers/chat_overlay_controller.dart';
+import '../providers/chat_provider.dart';
+import '../providers/settings_provider.dart';
+import '../screens/settings_screen.dart';
+import '../theme/app_theme.dart';
+
+bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
+
+/// Always-mounted overlay (see main.dart's MaterialApp.builder) rendering
+/// the chat FAB/bubble + panel above whatever screen is currently showing.
+/// A single widget instance backs the whole lifetime of an active chat
+/// session, so minimizing/maximizing/navigating away never tears down the
+/// ChatProvider or interrupts an in-flight answer -- see
+/// ChatOverlayController for the session-lifecycle side of this.
+///
+/// Desktop (Linux/Windows): small floating panel by default, with a
+/// maximize toggle -- mirrors the web app's ChatWidget.tsx exactly (FAB,
+/// panel, expand/compress, close-which-is-really-minimize).
+/// Android: opens full-screen (a small floating panel isn't usable at
+/// phone sizes) but stays minimizable -- minimizing shows a small floating
+/// bubble instead, tap to return to full-screen, same session still
+/// running underneath the whole time.
+class ChatOverlayHost extends StatelessWidget {
+  const ChatOverlayHost({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final overlay = context.watch<ChatOverlayController>();
+    if (!overlay.hasSession) return const SizedBox.shrink();
+
+    if (!overlay.isOpen) {
+      return _MinimizedBubble(overlay: overlay);
+    }
+    return _isAndroid ? _AndroidFullscreenPanel(overlay: overlay) : _DesktopPanel(overlay: overlay);
+  }
+}
+
+class _MinimizedBubble extends StatelessWidget {
+  final ChatOverlayController overlay;
+  const _MinimizedBubble({required this.overlay});
+
+  @override
+  Widget build(BuildContext context) {
+    final chat = overlay.chatProvider!;
+    return Positioned(
+      bottom: 24,
+      right: 24,
+      child: SafeArea(
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(32),
+            onTap: overlay.expand,
+            child: Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Theme.of(context).appColors.accentPrimary,
+                boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 16)],
+              ),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  const Icon(Icons.chat_bubble, color: Colors.black),
+                  if (chat.isLoading)
+                    const Positioned(
+                      right: 4,
+                      top: 4,
+                      child: SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DesktopPanel extends StatelessWidget {
+  final ChatOverlayController overlay;
+  const _DesktopPanel({required this.overlay});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).appColors;
+    return Positioned(
+      bottom: overlay.isMaximized ? 32 : 24,
+      right: overlay.isMaximized ? 32 : 24,
+      top: overlay.isMaximized ? 32 : null,
+      left: overlay.isMaximized ? 32 : null,
+      width: overlay.isMaximized ? null : 420,
+      height: overlay.isMaximized ? null : 640,
+      child: Material(
+        elevation: 16,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        color: colors.cardBg,
+        child: Column(
+          children: [
+            Container(height: 3, color: colors.accentPrimary),
+            _PanelHeader(
+              title: overlay.source?.title ?? 'Chat',
+              onMaximizeToggle: overlay.toggleMaximize,
+              isMaximized: overlay.isMaximized,
+              onClose: overlay.minimize,
+            ),
+            const Expanded(child: _ChatPanelBody()),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AndroidFullscreenPanel extends StatelessWidget {
+  final ChatOverlayController overlay;
+  const _AndroidFullscreenPanel({required this.overlay});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).appColors;
+    return Positioned.fill(
+      child: Material(
+        color: colors.background,
+        child: SafeArea(
+          child: Column(
+            children: [
+              _PanelHeader(
+                title: overlay.source?.title ?? 'Chat',
+                isMaximized: true,
+                onClose: overlay.minimize,
+                closeIcon: Icons.keyboard_arrow_down,
+                closeTooltip: 'Minimize',
+              ),
+              const Expanded(child: _ChatPanelBody()),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PanelHeader extends StatelessWidget {
+  final String title;
+  final bool isMaximized;
+  final VoidCallback? onMaximizeToggle;
+  final VoidCallback onClose;
+  final IconData closeIcon;
+  final String closeTooltip;
+
+  const _PanelHeader({
+    required this.title,
+    required this.isMaximized,
+    this.onMaximizeToggle,
+    required this.onClose,
+    this.closeIcon = Icons.remove,
+    this.closeTooltip = 'Minimize',
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).appColors;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: colors.borderColor))),
+      child: Row(
+        children: [
+          Icon(Icons.chat_bubble_outline, color: colors.accentPrimary, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(title, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
+          ),
+          if (onMaximizeToggle != null)
+            IconButton(
+              icon: Icon(isMaximized ? Icons.close_fullscreen : Icons.open_in_full, size: 18),
+              tooltip: isMaximized ? 'Restore' : 'Maximize',
+              onPressed: onMaximizeToggle,
+              visualDensity: VisualDensity.compact,
+            ),
+          IconButton(
+            icon: Icon(closeIcon, size: 20),
+            tooltip: closeTooltip,
+            onPressed: onClose,
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChatPanelBody extends StatefulWidget {
+  const _ChatPanelBody();
+
+  @override
+  State<_ChatPanelBody> createState() => _ChatPanelBodyState();
+}
+
+class _ChatPanelBodyState extends State<_ChatPanelBody> {
+  final _controller = TextEditingController();
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final overlay = context.watch<ChatOverlayController>();
+    final settings = context.watch<SettingsProvider>();
+    final chat = overlay.chatProvider;
+    if (chat == null) return const SizedBox.shrink();
+
+    if (settings.connections.isEmpty) {
+      return _NoProviderNotice(colors: Theme.of(context).appColors);
+    }
+
+    return ChangeNotifierProvider<ChatProvider>.value(
+      value: chat,
+      child: Consumer<ChatProvider>(
+        builder: (context, chat, _) {
+          WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+          return Column(
+            children: [
+              _buildToolbar(context, chat, settings),
+              Expanded(
+                child: ListView(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.all(12),
+                  children: [
+                    for (final m in chat.activeSession.messages) _MessageBubble(message: m),
+                    if (chat.isLoading) _MessageBubble.streaming(text: chat.streamingAnswer),
+                    if (chat.error != null)
+                      Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Text(
+                          chat.error!,
+                          style: TextStyle(color: Theme.of(context).appColors.highlight, fontSize: 12),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              _buildComposer(context, chat),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  void _scrollToBottom() {
+    if (!_scrollController.hasClients) return;
+    _scrollController.animateTo(
+      _scrollController.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+    );
+  }
+
+  Widget _buildToolbar(BuildContext context, ChatProvider chat, SettingsProvider settings) {
+    final active = chat.activeConnection;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButton<String>(
+                  isExpanded: true,
+                  value: active?.id,
+                  underline: const SizedBox.shrink(),
+                  items: [
+                    for (final c in settings.connections)
+                      DropdownMenuItem(value: c.id, child: Text(c.name, overflow: TextOverflow.ellipsis)),
+                  ],
+                  onChanged: chat.setConnection,
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.add_comment_outlined),
+                tooltip: 'New chat',
+                onPressed: chat.newChat,
+                visualDensity: VisualDensity.compact,
+              ),
+              IconButton(
+                icon: const Icon(Icons.history),
+                tooltip: 'History',
+                onPressed: () => _showHistorySheet(context, chat),
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+          ),
+          FilterChip(
+            label: const Text('🔐 Security context'),
+            selected: chat.includeSecurityContext,
+            onSelected: chat.setIncludeSecurityContext,
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showHistorySheet(BuildContext context, ChatProvider chat) {
+    showModalBottomSheet(
+      context: context,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final session in chat.sessions)
+                ListTile(
+                  title: Text(session.title, overflow: TextOverflow.ellipsis),
+                  subtitle: Text('${session.messages.length} messages'),
+                  onTap: () {
+                    chat.selectSession(session.id);
+                    Navigator.of(sheetContext).pop();
+                  },
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: () => chat.deleteSession(session.id),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildComposer(BuildContext context, ChatProvider chat) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _controller,
+                decoration: const InputDecoration(hintText: 'Ask about this wiki…'),
+                onSubmitted: (_) => _send(chat),
+                enabled: !chat.isLoading,
+                minLines: 1,
+                maxLines: 4,
+              ),
+            ),
+            IconButton(
+              icon: chat.isLoading
+                  ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.send),
+              onPressed: chat.isLoading ? null : () => _send(chat),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _send(ChatProvider chat) {
+    final text = _controller.text;
+    if (text.trim().isEmpty) return;
+    _controller.clear();
+    chat.sendMessage(text);
+  }
+}
+
+class _NoProviderNotice extends StatelessWidget {
+  final AppColors colors;
+  const _NoProviderNotice({required this.colors});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.settings_suggest_outlined, size: 40, color: colors.muted),
+            const SizedBox(height: 12),
+            Text(
+              'No LLM provider configured yet.\nGo to Settings to add one before you can chat.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: colors.muted),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.settings),
+              label: const Text('Open Settings'),
+              onPressed: () => rootNavigatorKey.currentState
+                  ?.push(MaterialPageRoute(builder: (_) => const SettingsScreen())),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MessageBubble extends StatelessWidget {
+  final String role;
+  final String text;
+
+  _MessageBubble({required ChatMessage message})
+      : role = message.role,
+        text = message.content;
+
+  const _MessageBubble.streaming({required this.text}) : role = 'assistant';
+
+  @override
+  Widget build(BuildContext context) {
+    final isUser = role == 'user';
+    final colors = Theme.of(context).appColors;
+    return Align(
+      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.all(10),
+        constraints: const BoxConstraints(maxWidth: 480),
+        decoration: BoxDecoration(
+          color: isUser ? colors.accentPrimary.withValues(alpha: 0.15) : colors.inputBg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: colors.borderColor),
+        ),
+        child: text.isEmpty
+            ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+            : isUser
+                ? Text(text)
+                : MarkdownBody(data: text, selectable: true),
+      ),
+    );
+  }
+}

@@ -1,17 +1,23 @@
 import 'package:hive_flutter/hive_flutter.dart';
 
+import '../models/app_settings.dart';
 import '../models/bundle_entry.dart';
 import '../models/chat_models.dart';
 import '../models/endpoint.dart';
+import '../models/llm_config.dart';
 
-/// Local persistence -- saved endpoints, imported bundle library, and
-/// per-wiki chat history. Deliberately stores plain JSON maps (no generated
-/// Hive TypeAdapters) so adding a field to any model never needs a codegen
-/// step; extend a model's toJson/fromJson and it just works.
+/// Local persistence -- saved endpoints, imported bundle library, per-wiki
+/// chat history, the app's own LLM connections, and app settings.
+/// Deliberately stores plain JSON maps (no generated Hive TypeAdapters) so
+/// adding a field to any model never needs a codegen step; extend a model's
+/// toJson/fromJson and it just works.
 class LocalStorage {
   static const _endpointsBox = 'endpoints';
   static const _bundlesBox = 'bundles';
   static const _chatSessionsBox = 'chat_sessions';
+  static const _llmConnectionsBox = 'llm_connections';
+  static const _settingsBox = 'settings';
+  static const _settingsKey = 'app_settings';
 
   static Future<void> init() async {
     await Hive.initFlutter();
@@ -19,6 +25,8 @@ class LocalStorage {
       Hive.openBox<Map>(_endpointsBox),
       Hive.openBox<Map>(_bundlesBox),
       Hive.openBox<Map>(_chatSessionsBox),
+      Hive.openBox<Map>(_llmConnectionsBox),
+      Hive.openBox<Map>(_settingsBox),
     ]);
   }
 
@@ -73,5 +81,35 @@ class LocalStorage {
 
   static Future<void> deleteChatSession(String sourceId, String sessionId) async {
     await Hive.box<Map>(_chatSessionsBox).delete('$sourceId::$sessionId');
+  }
+
+  // --- LLM connections (this app's own provider config, independent of
+  // any connected HackDeepWiki server) ---
+
+  static List<LlmConnection> loadLlmConnections() {
+    final box = Hive.box<Map>(_llmConnectionsBox);
+    return box.values.map((m) => LlmConnection.fromJson(Map<String, dynamic>.from(m))).toList();
+  }
+
+  static Future<void> saveLlmConnection(LlmConnection connection) async {
+    final box = Hive.box<Map>(_llmConnectionsBox);
+    await box.put(connection.id, connection.toJson());
+  }
+
+  static Future<void> deleteLlmConnection(String id) async {
+    await Hive.box<Map>(_llmConnectionsBox).delete(id);
+  }
+
+  // --- App settings (single record) ---
+
+  static AppSettings loadSettings() {
+    final box = Hive.box<Map>(_settingsBox);
+    final raw = box.get(_settingsKey);
+    if (raw == null) return const AppSettings();
+    return AppSettings.fromJson(Map<String, dynamic>.from(raw));
+  }
+
+  static Future<void> saveSettings(AppSettings settings) async {
+    await Hive.box<Map>(_settingsBox).put(_settingsKey, settings.toJson());
   }
 }

@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/endpoint.dart';
-import '../models/provider_config.dart';
 import '../models/vuln_models.dart';
 import '../models/web_vuln_models.dart';
 import '../models/wiki_models.dart';
@@ -149,15 +148,6 @@ class HackDeepWikiClient {
     _throwIfError(res);
     final data = jsonDecode(res.body) as Map<String, dynamic>;
     return (data['releases'] as List? ?? []).map((e) => ReleaseInfo.fromJson(e as Map<String, dynamic>)).toList();
-  }
-
-  /// Provider/model config -- same source UserSelector.tsx reads on the web
-  /// app. Shape: {"providers": [{"id","name","models":[{"id","name"}],
-  /// "supportsCustomModel"}], "defaultProvider": "..."}
-  Future<ModelsConfig> getModelsConfig() async {
-    final res = await _http.get(_uri('/models/config'));
-    _throwIfError(res);
-    return ModelsConfig.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
   }
 
   // --- .zim archives on this server (api/zim_reader.py / /api/zim/*) ---

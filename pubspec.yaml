@@ -78,8 +78,27 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
 
+  # Generates Android (legacy + adaptive) and Windows app icons from
+  # assets/icon/hackdeepwiki.png -- the same launcher icon HackDeepWiki
+  # itself uses (deepwiki-open/public/hackdeepwiki.png), so the reader app
+  # is visually recognizable as its companion. Linux has no equivalent tool
+  # (flutter_launcher_icons doesn't support it); its window icon is set
+  # directly from the same asset in linux/runner/my_application.cc.
+  flutter_launcher_icons: ^0.14.3
+
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
+
+flutter_launcher_icons:
+  image_path: "assets/icon/hackdeepwiki.png"
+  android: true
+  min_sdk_android: 21
+  adaptive_icon_background: "#030712"
+  adaptive_icon_foreground: "assets/icon/hackdeepwiki.png"
+  windows:
+    generate: true
+    image_path: "assets/icon/hackdeepwiki.png"
+    icon_size: 256
 
 # The following section is specific to Flutter packages.
 flutter:
@@ -89,10 +108,8 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  assets:
+    - assets/icon/hackdeepwiki.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

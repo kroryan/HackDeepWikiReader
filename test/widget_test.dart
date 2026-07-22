@@ -15,6 +15,8 @@ void main() {
       Hive.openBox<Map>('endpoints'),
       Hive.openBox<Map>('bundles'),
       Hive.openBox<Map>('chat_sessions'),
+      Hive.openBox<Map>('llm_connections'),
+      Hive.openBox<Map>('settings'),
     ]);
   });
 

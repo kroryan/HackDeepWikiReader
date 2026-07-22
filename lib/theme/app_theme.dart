@@ -140,10 +140,15 @@ class SeverityColors {
   }
 }
 
-ThemeData buildAppTheme(AppColors c, Brightness brightness) {
-  final textTheme = GoogleFonts.notoSansJpTextTheme(
-    brightness == Brightness.dark ? ThemeData.dark().textTheme : ThemeData.light().textTheme,
-  ).apply(bodyColor: c.foreground, displayColor: c.foreground);
+ThemeData buildAppTheme(
+  AppColors c,
+  Brightness brightness, {
+  String fontFamily = 'Noto Sans JP',
+  double fontScale = 1.0,
+}) {
+  final base = brightness == Brightness.dark ? ThemeData.dark().textTheme : ThemeData.light().textTheme;
+  final textTheme = GoogleFonts.getTextTheme(fontFamily, base)
+      .apply(bodyColor: c.foreground, displayColor: c.foreground, fontSizeFactor: fontScale);
 
   return ThemeData(
     brightness: brightness,
@@ -160,7 +165,7 @@ ThemeData buildAppTheme(AppColors c, Brightness brightness) {
       onSurface: c.foreground,
     ),
     textTheme: textTheme,
-    fontFamily: GoogleFonts.notoSansJp().fontFamily,
+    fontFamily: GoogleFonts.getFont(fontFamily).fontFamily,
     appBarTheme: AppBarTheme(
       backgroundColor: c.sidebarBg,
       foregroundColor: c.foreground,

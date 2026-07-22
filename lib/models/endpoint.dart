@@ -44,4 +44,17 @@ class Endpoint {
   /// baseUrl with any trailing slash stripped, so callers can always do
   /// '${endpoint.normalizedBaseUrl}/api/...' without worrying about '//'.
   String get normalizedBaseUrl => baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
+
+  /// Builds baseUrl from separate address/port fields -- see
+  /// EndpointFormScreen, which collects these as two fields (not one URL
+  /// text box) specifically so "which port do I use" has an unambiguous
+  /// answer instead of the user guessing between the browser port (3000)
+  /// and the API port (8001, what this app actually needs).
+  static String buildBaseUrl({required String scheme, required String host, required int port}) =>
+      '$scheme://$host:$port';
+
+  Uri get _uri => Uri.tryParse(normalizedBaseUrl) ?? Uri.parse('http://127.0.0.1:8001');
+  String get scheme => _uri.hasScheme ? _uri.scheme : 'http';
+  String get host => _uri.host.isNotEmpty ? _uri.host : '127.0.0.1';
+  int get port => _uri.hasPort ? _uri.port : 8001;
 }

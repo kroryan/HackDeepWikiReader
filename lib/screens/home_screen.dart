@@ -8,6 +8,7 @@ import '../theme/app_theme.dart';
 import 'bundle_viewer_screen.dart';
 import 'endpoint_form_screen.dart';
 import 'project_list_screen.dart';
+import 'settings_screen.dart';
 
 /// The "library" -- home screen. Saved server endpoints + imported
 /// .hdwreader bundles. This is the only screen with any create/delete
@@ -21,7 +22,18 @@ class HomeScreen extends StatelessWidget {
     final library = context.watch<LibraryProvider>();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('HackDeepWikiReader')),
+      appBar: AppBar(
+        title: const Text('HackDeepWikiReader'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Settings',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            ),
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [

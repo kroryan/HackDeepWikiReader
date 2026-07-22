@@ -1,12 +1,10 @@
-/// Chat protocol models -- mirror src/utils/websocketClient.ts's
-/// ChatMessage/ChatCompletionRequest (which itself mirrors
-/// api/chat_models.py::ChatCompletionRequest) exactly, field-for-field, so
-/// this app talks to the *same* /ws/chat endpoint the web app uses with no
-/// backend changes required.
+/// Chat message/session models. [ChatMessage] doubles as the wire shape
+/// sent to this app's own LLM clients (lib/llm/*) -- role is one of
+/// 'user' | 'assistant' | 'system'.
 library;
 
 class ChatMessage {
-  final String role; // 'user' | 'assistant' | 'system'
+  final String role;
   final String content;
 
   const ChatMessage({required this.role, required this.content});
@@ -17,64 +15,6 @@ class ChatMessage {
         role: json['role'] as String? ?? 'user',
         content: json['content'] as String? ?? '',
       );
-}
-
-/// One request sent over /ws/chat. See api/chat_models.py::ChatCompletionRequest
-/// for the authoritative field list -- keep these two in sync.
-class ChatCompletionRequest {
-  final String repoUrl;
-  final List<ChatMessage> messages;
-  final String? filePath;
-  final String? token;
-  final String type; // 'github' | 'gitlab' | 'bitbucket' | 'local' | 'website' | 'zim'
-  final String? currentPageId;
-  final bool enableToolCalling;
-  final String provider;
-  final String? model;
-  final String language;
-  final String? apiKey;
-  final String? apiEndpoint;
-  // 🔐 Security context (this app's chat screen exposes the same toggle the
-  // web app's Ask.tsx does).
-  final bool includeSecurityContext;
-  final String? owner;
-  final String? repo;
-
-  const ChatCompletionRequest({
-    required this.repoUrl,
-    required this.messages,
-    this.filePath,
-    this.token,
-    this.type = 'github',
-    this.currentPageId,
-    this.enableToolCalling = true,
-    this.provider = 'ollama',
-    this.model,
-    this.language = 'en',
-    this.apiKey,
-    this.apiEndpoint,
-    this.includeSecurityContext = false,
-    this.owner,
-    this.repo,
-  });
-
-  Map<String, dynamic> toJson() => {
-        'repo_url': repoUrl,
-        'messages': messages.map((m) => m.toJson()).toList(),
-        if (filePath != null) 'filePath': filePath,
-        if (token != null) 'token': token,
-        'type': type,
-        if (currentPageId != null) 'current_page_id': currentPageId,
-        'enable_tool_calling': enableToolCalling,
-        'provider': provider,
-        if (model != null) 'model': model,
-        'language': language,
-        if (apiKey != null) 'api_key': apiKey,
-        if (apiEndpoint != null) 'api_endpoint': apiEndpoint,
-        'include_security_context': includeSecurityContext,
-        if (owner != null) 'owner': owner,
-        if (repo != null) 'repo': repo,
-      };
 }
 
 /// A saved chat conversation for one wiki -- mirrors the shape of Ask.tsx's

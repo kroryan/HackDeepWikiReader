@@ -20,10 +20,6 @@ abstract class WikiSource {
   WikiStructure get structure;
   bool get isWebsite;
 
-  /// True only for a live server connection -- chat needs a real LLM
-  /// backend, so a standalone bundle (no endpoint) can't offer it.
-  bool get canChat;
-
   Future<VulnReport?> loadVulnReport({int? version});
   Future<WebVulnReport?> loadWebVulnReport({int? version});
   Future<List<ReleaseInfo>> loadVulnReleases();
@@ -57,9 +53,6 @@ class ServerWikiSource implements WikiSource {
 
   @override
   bool get isWebsite => project.isWebsite;
-
-  @override
-  bool get canChat => true;
 
   @override
   Future<VulnReport?> loadVulnReport({int? version}) => client.getVulnReport(
@@ -114,9 +107,6 @@ class BundleWikiSource implements WikiSource {
 
   @override
   bool get isWebsite => bundle.repoType == 'website';
-
-  @override
-  bool get canChat => false; // no live backend bundled with an offline file
 
   @override
   Future<VulnReport?> loadVulnReport({int? version}) async => bundle.vulnReport;

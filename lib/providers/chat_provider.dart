@@ -1,76 +1,76 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
-import '../api/chat_socket.dart';
-import '../api/stream_parser.dart';
+import '../llm/context_builder.dart';
+import '../llm/llm_client.dart';
 import '../models/chat_models.dart';
-import '../models/endpoint.dart';
+import '../models/llm_config.dart';
+import '../models/vuln_models.dart';
+import '../models/web_vuln_models.dart';
+import '../providers/wiki_source.dart';
 import '../storage/local_storage.dart';
+import 'settings_provider.dart';
 
-/// Chat state for one wiki -- direct port of Ask.tsx's core behavior:
-/// send a question, stream the answer (with interleaved process/tool-call
-/// events), keep history, persist sessions locally. Deep Research and the
-/// 🔐 Security-context toggle are exposed as plain booleans a screen can
-/// bind checkboxes to.
+/// Chat state for one wiki -- fully independent of any HackDeepWiki server.
+/// Talks directly to whichever LLM connection the user picks (configured in
+/// Settings, see SettingsProvider/lib/llm/), building its own context from
+/// the WikiSource already loaded locally (see lib/llm/context_builder.dart)
+/// since there's no server-side RAG pipeline available to this app. Kept
+/// alive by ChatOverlayController across navigation/minimize so a running
+/// answer, or the message history, survives leaving and re-entering a wiki.
 class ChatProvider extends ChangeNotifier {
   static const _uuid = Uuid();
 
-  final Endpoint endpoint;
-  final String sourceId; // WikiSource.sourceId -- keys chat history storage
-  final String repoUrl;
-  final String repoType;
-  final String owner;
-  final String repo;
-  final String language;
-  final String? currentPageId;
+  final WikiSource source;
+  final SettingsProvider settings;
+  String? currentPageId;
 
-  ChatProvider({
-    required this.endpoint,
-    required this.sourceId,
-    required this.repoUrl,
-    required this.repoType,
-    required this.owner,
-    required this.repo,
-    required this.language,
-    this.currentPageId,
-  }) {
-    _sessions = LocalStorage.loadChatSessions(sourceId);
+  ChatProvider({required this.source, required this.settings, this.currentPageId}) {
+    _sessions = LocalStorage.loadChatSessions(source.sourceId);
     if (_sessions.isEmpty) {
       _startNewSession();
     } else {
       _activeSessionId = _sessions.first.id;
     }
+    _connectionId = settings.defaultConnection?.id;
   }
 
   List<ChatSession> _sessions = [];
   String? _activeSessionId;
   bool _isLoading = false;
   String _streamingAnswer = '';
-  final List<ProcessEvent> _streamingEvents = [];
   String? _error;
+  String? _connectionId;
 
-  bool deepResearch = false;
   bool includeSecurityContext = false;
-  String provider = 'ollama';
-  String? model;
 
-  /// Setters that notify listeners -- prefer these over mutating the plain
-  /// fields above directly from a widget (which a screen might still do
-  /// once, e.g. right after fetching /models/config on init, before any
-  /// listener is attached yet; that's fine, but anything driven by user
-  /// interaction should go through here so the UI actually rebuilds).
-  void setProvider(String value) {
-    provider = value;
-    notifyListeners();
+  VulnReport? _vulnReport;
+  WebVulnReport? _webVulnReport;
+  bool _securityLoadAttempted = false;
+
+  StreamSubscription<String>? _streamSub;
+
+  List<ChatSession> get sessions => List.unmodifiable(_sessions);
+  ChatSession get activeSession =>
+      _sessions.firstWhere((s) => s.id == _activeSessionId, orElse: _startNewSession);
+  bool get isLoading => _isLoading;
+  String get streamingAnswer => _streamingAnswer;
+  String? get error => _error;
+
+  LlmConnection? get activeConnection {
+    final id = _connectionId;
+    if (id != null) {
+      for (final c in settings.connections) {
+        if (c.id == id) return c;
+      }
+    }
+    return settings.defaultConnection;
   }
 
-  void setModel(String? value) {
-    model = value;
-    notifyListeners();
-  }
-
-  void setDeepResearch(bool value) {
-    deepResearch = value;
+  void setConnection(String? id) {
+    _connectionId = id;
     notifyListeners();
   }
 
@@ -79,15 +79,9 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  ChatSocket? _socket;
-
-  List<ChatSession> get sessions => List.unmodifiable(_sessions);
-  ChatSession get activeSession =>
-      _sessions.firstWhere((s) => s.id == _activeSessionId, orElse: _startNewSession);
-  bool get isLoading => _isLoading;
-  String get streamingAnswer => _streamingAnswer;
-  List<ProcessEvent> get streamingEvents => List.unmodifiable(_streamingEvents);
-  String? get error => _error;
+  void setCurrentPageId(String? id) {
+    currentPageId = id;
+  }
 
   ChatSession _startNewSession() {
     final session = ChatSession(
@@ -113,7 +107,7 @@ class ChatProvider extends ChangeNotifier {
   }
 
   Future<void> deleteSession(String id) async {
-    await LocalStorage.deleteChatSession(sourceId, id);
+    await LocalStorage.deleteChatSession(source.sourceId, id);
     _sessions = _sessions.where((s) => s.id != id).toList();
     if (_activeSessionId == id) {
       _activeSessionId = _sessions.isNotEmpty ? _sessions.first.id : _startNewSession().id;
@@ -123,46 +117,70 @@ class ChatProvider extends ChangeNotifier {
 
   Future<void> sendMessage(String question) async {
     if (question.trim().isEmpty || _isLoading) return;
+
+    final connection = activeConnection;
+    if (connection == null) {
+      _error = 'No LLM provider configured. Open Settings to add one before chatting.';
+      notifyListeners();
+      return;
+    }
+
     _error = null;
     _isLoading = true;
     _streamingAnswer = '';
-    _streamingEvents.clear();
     notifyListeners();
 
     final session = activeSession;
     final history = [...session.messages, ChatMessage(role: 'user', content: question)];
     _replaceActiveSessionMessages(history, title: session.messages.isEmpty ? question.trim() : null);
 
-    final request = ChatCompletionRequest(
-      repoUrl: repoUrl,
-      messages: history,
-      type: repoType,
-      currentPageId: currentPageId,
-      provider: provider,
-      model: model,
-      language: language,
+    if (includeSecurityContext && !_securityLoadAttempted) {
+      _securityLoadAttempted = true;
+      try {
+        _vulnReport = await source.loadVulnReport();
+      } catch (_) {}
+      try {
+        _webVulnReport = await source.loadWebVulnReport();
+      } catch (_) {}
+    }
+
+    final systemPrompt = buildSystemPrompt(
+      wikiTitle: source.title,
+      wikiDescription: source.description,
+      structure: source.structure,
+      currentPage: currentPageId != null ? source.structure.pageById(currentPageId!) : null,
+      vulnReport: _vulnReport,
+      webVulnReport: _webVulnReport,
       includeSecurityContext: includeSecurityContext,
-      owner: owner,
-      repo: repo,
     );
 
-    _socket = ChatSocket(endpoint);
-    try {
-      await for (final result in _socket!.send(request)) {
-        _streamingAnswer += result.text;
-        _streamingEvents.addAll(result.events);
+    final client = buildLlmClient(connection);
+    final completer = Completer<void>();
+    _streamSub = client.streamChat(systemPrompt: systemPrompt, messages: history).listen(
+      (delta) {
+        _streamingAnswer += delta;
         notifyListeners();
-      }
+      },
+      onError: (Object e) {
+        _error = e is LlmClientException ? e.message : e.toString();
+        if (!completer.isCompleted) completer.complete();
+      },
+      onDone: () {
+        if (!completer.isCompleted) completer.complete();
+      },
+      cancelOnError: true,
+    );
+
+    await completer.future;
+
+    if (_streamingAnswer.isNotEmpty) {
       final finalHistory = [...history, ChatMessage(role: 'assistant', content: _streamingAnswer)];
       _replaceActiveSessionMessages(finalHistory);
-    } catch (e) {
-      _error = e.toString();
-    } finally {
-      _isLoading = false;
-      _streamingAnswer = '';
-      _streamingEvents.clear();
-      notifyListeners();
     }
+    _isLoading = false;
+    _streamingAnswer = '';
+    _streamSub = null;
+    notifyListeners();
   }
 
   void _replaceActiveSessionMessages(List<ChatMessage> messages, {String? title}) {
@@ -173,18 +191,19 @@ class ChatProvider extends ChangeNotifier {
       title: title != null ? (title.length > 48 ? title.substring(0, 48) : title) : null,
     );
     _sessions = _sessions.map((s) => s.id == updated.id ? updated : s).toList();
-    LocalStorage.saveChatSession(sourceId, updated);
+    LocalStorage.saveChatSession(source.sourceId, updated);
   }
 
   void cancel() {
-    _socket?.close();
+    _streamSub?.cancel();
+    _streamSub = null;
     _isLoading = false;
     notifyListeners();
   }
 
   @override
   void dispose() {
-    _socket?.close();
+    _streamSub?.cancel();
     super.dispose();
   }
 }

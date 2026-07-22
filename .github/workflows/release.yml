@@ -91,17 +91,47 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
+      # Play Store-ready signing: only runs when the repo has a real upload
+      # keystore configured as secrets (Settings -> Secrets and variables ->
+      # Actions -- ANDROID_KEYSTORE_BASE64: `base64 -w0 upload-keystore.jks`,
+      # plus ANDROID_KEYSTORE_PASSWORD/ANDROID_KEY_PASSWORD/ANDROID_KEY_ALIAS).
+      # Without these secrets, android/app/build.gradle.kts falls back to
+      # signing with the debug key -- the APK/AAB below still build and
+      # install fine, they're just not accepted by Play Console until real
+      # secrets are added.
+      - name: Restore release keystore
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > android/app/upload-keystore.jks
+          cat > android/key.properties <<EOF
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          storeFile=upload-keystore.jks
+          EOF
+
       - name: Build APK release
         run: flutter build apk --release
 
-      - name: Rename APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk HackDeepWikiReader.apk
+      - name: Build AAB release (Play Store bundle)
+        run: flutter build appbundle --release
 
-      - name: Upload Android artifact
+      - name: Rename outputs
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk HackDeepWikiReader.apk
+          cp build/app/outputs/bundle/release/app-release.aab HackDeepWikiReader.aab
+
+      - name: Upload Android APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: hackdeepwikireader-android
           path: HackDeepWikiReader.apk
+
+      - name: Upload Android AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hackdeepwikireader-android-aab
+          path: HackDeepWikiReader.aab
 
   publish-release:
     runs-on: ubuntu-latest
@@ -119,10 +149,16 @@ jobs:
           name: hackdeepwikireader-windows
           path: ./artifacts
 
-      - name: Download Android artifact
+      - name: Download Android APK artifact
         uses: actions/download-artifact@v4
         with:
           name: hackdeepwikireader-android
+          path: ./artifacts
+
+      - name: Download Android AAB artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: hackdeepwikireader-android-aab
           path: ./artifacts
 
       - name: Setup environment for Release
