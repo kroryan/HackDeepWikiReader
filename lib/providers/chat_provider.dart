@@ -76,6 +76,15 @@ class ChatProvider extends ChangeNotifier {
   // ChatMessage history once the round completes, same as this app's
   // existing _toolStatus.
   String _thinkingBuffer = '';
+  // Every page whose content actually went into the prompt this turn (the
+  // currently-open page, plus anything found via SEARCH_WIKI), pageId ->
+  // title, in first-seen order (a plain {} literal is a LinkedHashMap in
+  // Dart, so insertion order is preserved) -- mirrors the web backend's
+  // `collected_refs`/`refs_sink` (api/search_tool.py's _record) and its
+  // "📚 Pages consulted" footer (format_sources_footer), appended to the
+  // answer the same way there: as literal Markdown text at the end of the
+  // message, not a separate UI element the backend doesn't have either.
+  final Map<String, String> _consultedPages = {};
 
   bool includeSecurityContext = false;
 
@@ -211,6 +220,14 @@ class ChatProvider extends ChangeNotifier {
     _streamingAnswer = '';
     _toolStatus = null;
     _thinkingBuffer = '';
+    _consultedPages.clear();
+    // The currently-open page's full content is always part of the system
+    // prompt (see context_builder.dart's buildSystemPrompt currentPage
+    // section) regardless of whether any SEARCH_WIKI tool call happens --
+    // mirrors api/search_tool.py's build_zim_context, which records the
+    // current entry into refs_sink unconditionally, before any search.
+    final openPage = currentPageId != null ? source.structure.pageById(currentPageId!) : null;
+    if (openPage != null) _consultedPages[openPage.id] = openPage.title;
     notifyListeners();
 
     final session = activeSession;
@@ -272,6 +289,12 @@ class ChatProvider extends ChangeNotifier {
       }
     }
     _error = lastError;
+
+    // Only a REAL answer gets a sources footer -- the fallback message
+    // below isn't attributable to any page's content.
+    if (finalAnswer != null && finalAnswer.trim().isNotEmpty) {
+      finalAnswer = finalAnswer + _buildSourcesFooter();
+    }
 
     // Mirrors the web backend's own safety net (api/agent_loop.py's
     // sent_anything tracking): even after a retry, a reasoning-heavy model
@@ -352,6 +375,9 @@ class ChatProvider extends ChangeNotifier {
         AppLogger.instance.info(
           'sendMessage: SEARCH_WIKI "$query" -> ${hits.length} hits',
         );
+        for (final h in hits) {
+          _consultedPages[h.pageId] = h.title;
+        }
         workingMessages = [
           ...workingMessages,
           ChatMessage(role: 'assistant', content: result.text.trim()),
@@ -461,6 +487,20 @@ class ChatProvider extends ChangeNotifier {
       notifyListeners();
     }
     return _RoundResult(fullText);
+  }
+
+  /// Mirrors api/search_tool.py's format_sources_footer -- same label
+  /// ("Pages consulted", left untranslated there too: every call site
+  /// passes the default), same "📚 ... · ..." shape, same "distinct
+  /// pages, first-seen order" semantics. Titles aren't links here (unlike
+  /// the web app's clickable/`codefile:` versions) -- this app's chat
+  /// panel is a separate overlay from whichever screen is showing the
+  /// wiki, with no existing plumbing to tell it "navigate to this page",
+  /// so this ships the transparency (which pages were used) without
+  /// inventing new cross-overlay navigation wiring for it.
+  String _buildSourcesFooter() {
+    if (_consultedPages.isEmpty) return '';
+    return '\n\n---\n*📚 Pages consulted: ${_consultedPages.values.join(' · ')}*';
   }
 
   String _formatSearchResults(List<WikiSearchHit> hits) {
