@@ -132,6 +132,7 @@ class RemediationStep {
   final String action;
   final String severity;
   final List<String> findingIds;
+  final List<String> findingTitles;
   final String category;
   final int affectedCount;
 
@@ -139,6 +140,7 @@ class RemediationStep {
     required this.action,
     required this.severity,
     required this.findingIds,
+    required this.findingTitles,
     required this.category,
     required this.affectedCount,
   });
@@ -148,6 +150,7 @@ class RemediationStep {
       action: json['action'] as String? ?? '',
       severity: json['severity'] as String? ?? 'INFO',
       findingIds: (json['finding_ids'] as List?)?.map((e) => e as String).toList() ?? [],
+      findingTitles: (json['finding_titles'] as List?)?.map((e) => e as String).toList() ?? [],
       category: json['category'] as String? ?? '',
       affectedCount: json['affected_count'] as int? ?? 0,
     );

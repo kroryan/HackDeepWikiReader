@@ -1,6 +1,8 @@
 # Project-level configuration.
 cmake_minimum_required(VERSION 3.14)
 project(hackdeepwikireader LANGUAGES CXX)
+# C (not just C++) is needed to compile native/zstddeclib.c below.
+enable_language(C)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
@@ -86,6 +88,15 @@ if(PLUGIN_BUNDLED_LIBRARIES)
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+
+# Native zstd decoder (see native/zstddeclib.c) -- .zim archive clusters are
+# almost always zstd-compressed and there's no pure-Dart decoder, so
+# lib/native/zstd_native.dart dlopens this small bundled DLL by name at
+# runtime. Built fresh from source on every `flutter build windows`, same as
+# the rest of the app -- no prebuilt binary is committed for this platform.
+add_library(zstddec SHARED "${CMAKE_CURRENT_SOURCE_DIR}/../native/zstddeclib.c")
+set_target_properties(zstddec PROPERTIES OUTPUT_NAME "zstddec" PREFIX "")
+install(TARGETS zstddec RUNTIME DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
 
 # Copy the native assets provided by the build.dart from all packages.
 set(NATIVE_ASSETS_DIR "${PROJECT_BUILD_DIR}native_assets/windows/")

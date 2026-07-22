@@ -5,6 +5,7 @@ import '../models/bundle_entry.dart';
 import '../models/chat_models.dart';
 import '../models/endpoint.dart';
 import '../models/llm_config.dart';
+import '../models/zim_entry.dart';
 
 /// Local persistence -- saved endpoints, imported bundle library, per-wiki
 /// chat history, the app's own LLM connections, and app settings.
@@ -14,6 +15,7 @@ import '../models/llm_config.dart';
 class LocalStorage {
   static const _endpointsBox = 'endpoints';
   static const _bundlesBox = 'bundles';
+  static const _zimsBox = 'zims';
   static const _chatSessionsBox = 'chat_sessions';
   static const _llmConnectionsBox = 'llm_connections';
   static const _settingsBox = 'settings';
@@ -24,6 +26,7 @@ class LocalStorage {
     await Future.wait([
       Hive.openBox<Map>(_endpointsBox),
       Hive.openBox<Map>(_bundlesBox),
+      Hive.openBox<Map>(_zimsBox),
       Hive.openBox<Map>(_chatSessionsBox),
       Hive.openBox<Map>(_llmConnectionsBox),
       Hive.openBox<Map>(_settingsBox),
@@ -60,6 +63,22 @@ class LocalStorage {
 
   static Future<void> deleteBundle(String id) async {
     await Hive.box<Map>(_bundlesBox).delete(id);
+  }
+
+  // --- .zim archives (imported directly, read fully offline) ---
+
+  static List<ZimEntry> loadZims() {
+    final box = Hive.box<Map>(_zimsBox);
+    return box.values.map((m) => ZimEntry.fromJson(Map<String, dynamic>.from(m))).toList();
+  }
+
+  static Future<void> saveZim(ZimEntry zim) async {
+    final box = Hive.box<Map>(_zimsBox);
+    await box.put(zim.id, zim.toJson());
+  }
+
+  static Future<void> deleteZim(String id) async {
+    await Hive.box<Map>(_zimsBox).delete(id);
   }
 
   // --- Chat sessions (keyed by "<sourceId>::<sessionId>" so sessions from

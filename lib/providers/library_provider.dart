@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../api/hackdeepwiki_client.dart';
 import '../models/bundle_entry.dart';
 import '../models/endpoint.dart';
+import '../models/zim_entry.dart';
 import '../storage/local_storage.dart';
 
 /// The "library": saved server endpoints + imported .hdwreader bundles.
@@ -17,10 +18,12 @@ class LibraryProvider extends ChangeNotifier {
 
   List<Endpoint> _endpoints = [];
   List<BundleEntry> _bundles = [];
+  List<ZimEntry> _zims = [];
   final Map<String, bool> _connectionStatus = {}; // endpoint.id -> reachable
 
   List<Endpoint> get endpoints => List.unmodifiable(_endpoints);
   List<BundleEntry> get bundles => List.unmodifiable(_bundles);
+  List<ZimEntry> get zims => List.unmodifiable(_zims);
   bool? isReachable(String endpointId) => _connectionStatus[endpointId];
 
   LibraryProvider() {
@@ -30,6 +33,7 @@ class LibraryProvider extends ChangeNotifier {
   void _load() {
     _endpoints = LocalStorage.loadEndpoints();
     _bundles = LocalStorage.loadBundles();
+    _zims = LocalStorage.loadZims();
     notifyListeners();
     for (final e in _endpoints) {
       unawaited(checkConnection(e));
@@ -93,6 +97,25 @@ class LibraryProvider extends ChangeNotifier {
   Future<void> removeBundle(String id) async {
     await LocalStorage.deleteBundle(id);
     _bundles = _bundles.where((b) => b.id != id).toList();
+    notifyListeners();
+  }
+
+  Future<ZimEntry> addZim(String filePath, String title) async {
+    final entry = ZimEntry(
+      id: _uuid.v4(),
+      filePath: filePath,
+      title: title,
+      importedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    await LocalStorage.saveZim(entry);
+    _zims = [..._zims, entry];
+    notifyListeners();
+    return entry;
+  }
+
+  Future<void> removeZim(String id) async {
+    await LocalStorage.deleteZim(id);
+    _zims = _zims.where((z) => z.id != id).toList();
     notifyListeners();
   }
 }

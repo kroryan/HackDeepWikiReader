@@ -23,11 +23,38 @@ class VulnGraph2DView extends StatefulWidget {
 class _VulnGraph2DViewState extends State<VulnGraph2DView> {
   late Graph _graph;
   late FruchtermanReingoldAlgorithm _algorithm;
+  final TransformationController _transform = TransformationController();
+
+  static const double _minScale = 0.05;
+  static const double _maxScale = 4;
+  double _scale = 1;
 
   @override
   void initState() {
     super.initState();
     _build();
+    _transform.addListener(_onTransformChanged);
+  }
+
+  @override
+  void dispose() {
+    _transform.removeListener(_onTransformChanged);
+    _transform.dispose();
+    super.dispose();
+  }
+
+  void _onTransformChanged() {
+    final newScale = _transform.value.getMaxScaleOnAxis();
+    if ((newScale - _scale).abs() > 0.001) {
+      setState(() => _scale = newScale);
+    }
+  }
+
+  void _setScale(double next) {
+    final current = _transform.value.getMaxScaleOnAxis();
+    if (current <= 0) return;
+    final factor = next / current;
+    _transform.value = _transform.value.clone()..scale(factor);
   }
 
   @override
@@ -71,19 +98,92 @@ class _VulnGraph2DViewState extends State<VulnGraph2DView> {
         child: Text('No graph data available.', style: TextStyle(color: Theme.of(context).appColors.muted)),
       );
     }
-    return InteractiveViewer(
-      constrained: false,
-      boundaryMargin: const EdgeInsets.all(200),
-      minScale: 0.05,
-      maxScale: 4,
-      child: GraphView(
-        graph: _graph,
-        algorithm: _algorithm,
-        builder: (Node node) {
-          final id = node.key!.value as String;
-          final data = _nodeData(id);
-          return _NodeChip(data: data, onTap: data == null ? null : () => widget.onNodeTap?.call(data));
-        },
+    return Stack(
+      children: [
+        InteractiveViewer(
+          transformationController: _transform,
+          constrained: false,
+          boundaryMargin: const EdgeInsets.all(200),
+          minScale: _minScale,
+          maxScale: _maxScale,
+          child: GraphView(
+            graph: _graph,
+            algorithm: _algorithm,
+            builder: (Node node) {
+              final id = node.key!.value as String;
+              final data = _nodeData(id);
+              return _NodeChip(data: data, onTap: data == null ? null : () => widget.onNodeTap?.call(data));
+            },
+          ),
+        ),
+        Positioned(
+          right: 12,
+          bottom: 12,
+          child: _ZoomControls(
+            scale: _scale,
+            minScale: _minScale,
+            maxScale: _maxScale,
+            onChanged: _setScale,
+            onReset: () => _transform.value = Matrix4.identity(),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ZoomControls extends StatelessWidget {
+  final double scale;
+  final double minScale;
+  final double maxScale;
+  final ValueChanged<double> onChanged;
+  final VoidCallback onReset;
+
+  const _ZoomControls({
+    required this.scale,
+    required this.minScale,
+    required this.maxScale,
+    required this.onChanged,
+    required this.onReset,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      elevation: 4,
+      borderRadius: BorderRadius.circular(24),
+      color: Theme.of(context).cardColor,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.remove, size: 18),
+              tooltip: 'Zoom out',
+              onPressed: () => onChanged((scale - 0.25).clamp(minScale, maxScale)),
+            ),
+            SizedBox(
+              width: 120,
+              child: Slider(
+                value: scale.clamp(minScale, maxScale),
+                min: minScale,
+                max: maxScale,
+                onChanged: onChanged,
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.add, size: 18),
+              tooltip: 'Zoom in',
+              onPressed: () => onChanged((scale + 0.25).clamp(minScale, maxScale)),
+            ),
+            IconButton(
+              icon: const Icon(Icons.center_focus_strong, size: 18),
+              tooltip: 'Reset zoom',
+              onPressed: onReset,
+            ),
+          ],
+        ),
       ),
     );
   }

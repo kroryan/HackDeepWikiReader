@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 
 import '../llm/context_builder.dart';
 import '../llm/llm_client.dart';
+import '../llm/wiki_search.dart';
 import '../models/chat_models.dart';
 import '../models/llm_config.dart';
 import '../models/vuln_models.dart';
@@ -12,6 +13,14 @@ import '../models/web_vuln_models.dart';
 import '../providers/wiki_source.dart';
 import '../storage/local_storage.dart';
 import 'settings_provider.dart';
+
+/// One round of the agentic tool-calling loop (see [ChatProvider._streamOneRound]).
+class _RoundResult {
+  final String text;
+  final bool isToolCall;
+  final String? toolQuery;
+  const _RoundResult(this.text, {this.isToolCall = false, this.toolQuery});
+}
 
 /// Chat state for one wiki -- fully independent of any HackDeepWiki server.
 /// Talks directly to whichever LLM connection the user picks (configured in
@@ -22,6 +31,12 @@ import 'settings_provider.dart';
 /// answer, or the message history, survives leaving and re-entering a wiki.
 class ChatProvider extends ChangeNotifier {
   static const _uuid = Uuid();
+  static const _toolPrefix = 'SEARCH_WIKI:';
+  static final _toolCallPattern = RegExp(r'^SEARCH_WIKI:\s*(.+)$', caseSensitive: false);
+  // Mirrors the backend's own MAX_TOOL_ROUNDS (api/agent_loop.py) -- the
+  // last round always has tool calling disabled (see buildSystemPrompt's
+  // allowToolCalling), forcing a direct answer instead of looping forever.
+  static const _maxToolRounds = 4;
 
   final WikiSource source;
   final SettingsProvider settings;
@@ -44,6 +59,7 @@ class ChatProvider extends ChangeNotifier {
   String _streamingAnswer = '';
   String? _error;
   String? _connectionId;
+  String? _toolStatus;
 
   bool includeSecurityContext = false;
 
@@ -59,6 +75,9 @@ class ChatProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String get streamingAnswer => _streamingAnswer;
   String? get error => _error;
+  /// Non-null while a SEARCH_WIKI tool round is running -- the UI shows this
+  /// instead of the (empty, or in-progress-but-not-yet-shown) answer bubble.
+  String? get toolStatus => _toolStatus;
 
   /// Whether there's actually a security/web-vuln report to fold into the
   /// prompt -- backs the 🔐 toggle's visibility, which should only appear
@@ -133,6 +152,17 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Sends a message and drives the agentic tool-calling loop -- this app
+  /// has no server-side RAG/search pipeline, so instead of stuffing an
+  /// entire wiki's content into one prompt (which for a large .zim archive,
+  /// e.g. a real Wikipedia dump with 17k+ pages, silently blows past any
+  /// model's context window), the model gets a bounded slice up front (see
+  /// context_builder.dart) plus a SEARCH_WIKI tool it can call for anything
+  /// else -- mirroring HackDeepWiki's own agentic chat (api/agent_loop.py),
+  /// specifically its provider-agnostic textual fallback (sniff_and_relay),
+  /// since that's the one path that works identically across every provider
+  /// this app's LlmClient abstraction supports (see llm_client.dart) without
+  /// needing per-provider native function-calling integration.
   Future<void> sendMessage(String question) async {
     if (question.trim().isEmpty || _isLoading) return;
 
@@ -146,34 +176,105 @@ class ChatProvider extends ChangeNotifier {
     _error = null;
     _isLoading = true;
     _streamingAnswer = '';
+    _toolStatus = null;
     notifyListeners();
 
     final session = activeSession;
-    final history = [...session.messages, ChatMessage(role: 'user', content: question)];
-    _replaceActiveSessionMessages(history, title: session.messages.isEmpty ? question.trim() : null);
+    final baseHistory = [...session.messages, ChatMessage(role: 'user', content: question)];
+    _replaceActiveSessionMessages(baseHistory, title: session.messages.isEmpty ? question.trim() : null);
 
     if (includeSecurityContext) await _securityLoadFuture;
 
-    final systemPrompt = buildSystemPrompt(
-      wikiTitle: source.title,
-      wikiDescription: source.description,
-      structure: source.structure,
-      isWebsite: source.isWebsite,
-      currentPage: currentPageId != null ? source.structure.pageById(currentPageId!) : null,
-      vulnReport: _vulnReport,
-      webVulnReport: _webVulnReport,
-      includeSecurityContext: includeSecurityContext,
-    );
-
     final client = buildLlmClient(connection);
-    final completer = Completer<void>();
-    _streamSub = client.streamChat(systemPrompt: systemPrompt, messages: history).listen(
-      (delta) {
-        _streamingAnswer += delta;
+    var workingMessages = List<ChatMessage>.from(baseHistory);
+    String? finalAnswer;
+
+    for (var round = 0; round < _maxToolRounds; round++) {
+      final isLastRound = round == _maxToolRounds - 1;
+      final systemPrompt = buildSystemPrompt(
+        wikiTitle: source.title,
+        wikiDescription: source.description,
+        structure: source.structure,
+        isWebsite: source.isWebsite,
+        currentPage: currentPageId != null ? source.structure.pageById(currentPageId!) : null,
+        vulnReport: _vulnReport,
+        webVulnReport: _webVulnReport,
+        includeSecurityContext: includeSecurityContext,
+        allowToolCalling: !isLastRound,
+      );
+
+      final result = await _streamOneRound(client, systemPrompt, workingMessages, allowToolSniffing: !isLastRound);
+      if (result == null) break; // error (sets _error) or produced nothing
+
+      if (result.isToolCall) {
+        final query = result.toolQuery!;
+        _toolStatus = 'Searching "$query"…';
+        _streamingAnswer = '';
         notifyListeners();
+        final hits = await searchWiki(source, query);
+        workingMessages = [
+          ...workingMessages,
+          ChatMessage(role: 'assistant', content: result.text.trim()),
+          ChatMessage(role: 'user', content: '<tool_result>\n${_formatSearchResults(hits)}\n</tool_result>'),
+        ];
+        _toolStatus = null;
+        continue;
+      }
+
+      finalAnswer = result.text;
+      break;
+    }
+
+    if (finalAnswer != null && finalAnswer.isNotEmpty) {
+      final finalHistory = [...baseHistory, ChatMessage(role: 'assistant', content: finalAnswer)];
+      _replaceActiveSessionMessages(finalHistory);
+    }
+    _isLoading = false;
+    _streamingAnswer = '';
+    _toolStatus = null;
+    _streamSub = null;
+    notifyListeners();
+  }
+
+  /// Streams one LLM turn. While [allowToolSniffing], the response is
+  /// buffered (not shown live) until it's clear whether it's forming a bare
+  /// `SEARCH_WIKI: <query>` line -- otherwise the raw tool-call syntax would
+  /// flash on screen for a moment before being recognized. A real tool call
+  /// must be the model's ENTIRE response (single line); anything else is
+  /// treated as a normal answer, buffered portion included.
+  Future<_RoundResult?> _streamOneRound(
+    LlmClient client,
+    String systemPrompt,
+    List<ChatMessage> messages, {
+    required bool allowToolSniffing,
+  }) async {
+    final completer = Completer<void>();
+    final buffer = StringBuffer();
+    var sniffResolved = !allowToolSniffing;
+    var hadError = false;
+
+    _streamSub = client.streamChat(systemPrompt: systemPrompt, messages: messages).listen(
+      (delta) {
+        buffer.write(delta);
+        if (sniffResolved) {
+          _streamingAnswer += delta;
+          notifyListeners();
+          return;
+        }
+        final text = buffer.toString();
+        if (text.length < _toolPrefix.length) return;
+        if (text.substring(0, _toolPrefix.length).toUpperCase() != _toolPrefix) {
+          sniffResolved = true;
+          _streamingAnswer = text;
+          notifyListeners();
+        } else {
+          _toolStatus = 'Thinking…';
+          notifyListeners();
+        }
       },
       onError: (Object e) {
         _error = e is LlmClientException ? e.message : e.toString();
+        hadError = true;
         if (!completer.isCompleted) completer.complete();
       },
       onDone: () {
@@ -183,15 +284,32 @@ class ChatProvider extends ChangeNotifier {
     );
 
     await completer.future;
-
-    if (_streamingAnswer.isNotEmpty) {
-      final finalHistory = [...history, ChatMessage(role: 'assistant', content: _streamingAnswer)];
-      _replaceActiveSessionMessages(finalHistory);
-    }
-    _isLoading = false;
-    _streamingAnswer = '';
     _streamSub = null;
-    notifyListeners();
+    if (hadError) return null;
+
+    final fullText = buffer.toString();
+    final trimmed = fullText.trim();
+    final match = _toolCallPattern.firstMatch(trimmed);
+    if (allowToolSniffing && match != null && !trimmed.contains('\n')) {
+      return _RoundResult(fullText, isToolCall: true, toolQuery: match.group(1)!.trim());
+    }
+    if (!sniffResolved) {
+      // Short response that never got flushed to the live answer -- show it now.
+      _streamingAnswer = fullText;
+      notifyListeners();
+    }
+    return _RoundResult(fullText);
+  }
+
+  String _formatSearchResults(List<WikiSearchHit> hits) {
+    if (hits.isEmpty) return 'No matching pages found.';
+    final buffer = StringBuffer();
+    for (final h in hits) {
+      buffer.writeln('### ${h.title}');
+      buffer.writeln(h.snippet);
+      buffer.writeln();
+    }
+    return buffer.toString();
   }
 
   void _replaceActiveSessionMessages(List<ChatMessage> messages, {String? title}) {
@@ -209,6 +327,7 @@ class ChatProvider extends ChangeNotifier {
     _streamSub?.cancel();
     _streamSub = null;
     _isLoading = false;
+    _toolStatus = null;
     notifyListeners();
   }
 

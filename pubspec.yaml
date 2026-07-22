@@ -40,6 +40,11 @@ dependencies:
   # WebSocket, chat never proxies through a HackDeepWiki server.
   http: ^1.2.2
 
+  # dart:ffi calls into native/zstddeclib.c (bundled per-platform, see
+  # lib/native/zstd_native.dart) to decompress .zim clusters -- almost all
+  # modern .zim archives use zstd, and there's no pure-Dart zstd decoder.
+  ffi: ^2.1.3
+
   # Content rendering.
   flutter_markdown_plus: ^1.0.3
   # Syntax-highlighted code blocks inside wiki page Markdown, matching the
@@ -51,11 +56,21 @@ dependencies:
   # for its custom `pre` builder.
   markdown: ^7.3.0
   graphview: ^1.2.0
-  # Pure-Dart HTML rendering (no native WebView) -- used for .zim entry
-  # content, which the backend returns as raw HTML (see
-  # api/api.py::get_zim_entry). Avoids the cross-platform WebView-plugin
-  # reliability risk entirely for that one screen.
+  # .zim entry rendering (lib/widgets/zim_html_view.dart, zim_webview.dart):
+  # flutter_html is the fallback everywhere no real WebView plugin exists
+  # (Linux has none from the Flutter team). It has no CSS/table engine
+  # anywhere close to a real browser's, so complex real-world .zim HTML
+  # (e.g. full Wikipedia dumps, with heavy infobox tables/CSS) renders best-
+  # effort there, not pixel-correct -- see zim_webview.dart for the
+  # Android/Windows path, which uses a real browser engine instead.
   flutter_html: ^3.0.0
+  # Real browser engine for .zim rendering on Android -- WebView-based, so
+  # full CSS/table support instead of flutter_html's subset. Points at
+  # lib/zim/zim_local_server.dart's loopback HTTP server, never the network.
+  webview_flutter: ^4.13.1
+  # Same idea for Windows (WebView2/Edge) -- a different package because
+  # webview_flutter itself has no Windows implementation.
+  webview_windows: ^0.4.0
 
   # Local storage: saved endpoints, imported bundle library, chat history.
   hive: ^2.2.3

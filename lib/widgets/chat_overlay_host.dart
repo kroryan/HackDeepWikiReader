@@ -48,13 +48,23 @@ class ChatOverlayHost extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Navigator(
-      initialRoute: '/',
-      onGenerateRoute: (settings) =>
-          _ChatHomeRoute(builder: (_) => const _ChatOverlayContent()),
-      // The chat is a floating overlay, never a focus-trap that dims the app
-      // behind it; keep its own focus management out of the way.
-      observers: const <NavigatorObserver>[],
+    // HeroControllerScope.none(): without this, this Navigator inherits the
+    // app root Navigator's default HeroController (Flutter installs one
+    // automatically per MaterialApp) and Flutter refuses to let two
+    // Navigators share one -- "A HeroController can not be shared by
+    // multiple Navigators" (seen live, via AppLogger's FlutterError.onError
+    // capture). The chat panel never does hero-animated route transitions,
+    // so it doesn't need a controller of its own either -- `.none()` is the
+    // correct fix, not just a workaround.
+    return HeroControllerScope.none(
+      child: Navigator(
+        initialRoute: '/',
+        onGenerateRoute: (settings) =>
+            _ChatHomeRoute(builder: (_) => const _ChatOverlayContent()),
+        // The chat is a floating overlay, never a focus-trap that dims the app
+        // behind it; keep its own focus management out of the way.
+        observers: const <NavigatorObserver>[],
+      ),
     );
   }
 }
@@ -321,7 +331,8 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
                   padding: const EdgeInsets.all(12),
                   children: [
                     for (final m in chat.activeSession.messages) _MessageBubble(message: m),
-                    if (chat.isLoading) _MessageBubble.streaming(text: chat.streamingAnswer),
+                    if (chat.isLoading && chat.toolStatus != null) _ToolStatusBubble(text: chat.toolStatus!),
+                    if (chat.isLoading && chat.toolStatus == null) _MessageBubble.streaming(text: chat.streamingAnswer),
                     if (chat.error != null)
                       Padding(
                         padding: const EdgeInsets.all(8),
@@ -488,6 +499,44 @@ class _NoProviderNotice extends StatelessWidget {
               onPressed: () => rootNavigatorKey.currentState
                   ?.push(MaterialPageRoute(builder: (_) => const SettingsScreen())),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown in place of the streaming answer bubble while the agentic loop
+/// (see ChatProvider._streamOneRound/searchWiki) is running a SEARCH_WIKI
+/// tool round -- makes it visible that a search is happening instead of
+/// looking like the answer has stalled.
+class _ToolStatusBubble extends StatelessWidget {
+  final String text;
+  const _ToolStatusBubble({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).appColors;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: colors.inputBg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: colors.borderColor),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              height: 12,
+              width: 12,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+            const SizedBox(width: 8),
+            Text(text, style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic, color: colors.muted)),
           ],
         ),
       ),

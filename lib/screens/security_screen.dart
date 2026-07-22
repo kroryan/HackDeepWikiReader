@@ -6,6 +6,7 @@ import '../models/wiki_models.dart';
 import '../providers/wiki_source.dart';
 import '../theme/app_theme.dart';
 import '../widgets/vuln_graph_2d.dart';
+import '../widgets/vuln_remediation_plan_view.dart';
 
 /// Read-only Security Analysis / Website Security viewer -- direct port of
 /// VulnSection.tsx / WebVulnSection.tsx: overview stats, tabbed findings,
@@ -114,7 +115,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
       return const Center(child: Text('No vulnerability scan available for this wiki.'));
     }
     return DefaultTabController(
-      length: 4,
+      length: 5,
       child: Column(
         children: [
           _releaseSelector(),
@@ -122,10 +123,11 @@ class _SecurityScreenState extends State<SecurityScreen> {
             'Total findings': '${report.totalFindings}',
             'Dependencies scanned': '${report.totalDependenciesScanned}',
           }),
-          const TabBar(tabs: [
+          const TabBar(isScrollable: true, tabs: [
             Tab(text: 'Client'),
             Tab(text: 'Server'),
             Tab(text: 'Dependencies'),
+            Tab(text: 'Solutions'),
             Tab(text: 'Graph'),
           ]),
           Expanded(
@@ -133,6 +135,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
               _CveFindingsList(findings: report.clientFindings),
               _CveFindingsList(findings: report.serverFindings),
               _CveFindingsList(findings: report.dependencyFindings),
+              VulnRemediationPlanView(plan: report.remediationPlan),
               VulnGraph2DView(graph: report.graph, onNodeTap: (n) => _showCveNodeDetail(report, n.id)),
             ]),
           ),
@@ -147,7 +150,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
       return const Center(child: Text('No website security scan available for this wiki.'));
     }
     return DefaultTabController(
-      length: 5,
+      length: 6,
       child: Column(
         children: [
           _releaseSelector(),
@@ -161,6 +164,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
             Tab(text: 'Cookies'),
             Tab(text: 'TLS'),
             Tab(text: 'Exposure'),
+            Tab(text: 'Solutions'),
             Tab(text: 'Graph'),
           ]),
           Expanded(
@@ -169,6 +173,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
               _WebFindingsList(findings: report.cookieFindings),
               _WebFindingsList(findings: report.tlsFindings),
               _WebFindingsList(findings: report.exposureFindings),
+              VulnRemediationPlanView(plan: report.remediationPlan),
               VulnGraph2DView(graph: report.graph),
             ]),
           ),

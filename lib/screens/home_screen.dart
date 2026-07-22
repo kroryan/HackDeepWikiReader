@@ -1,14 +1,20 @@
+import 'dart:io';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:uuid/uuid.dart';
 
 import '../bundle/hdwreader_bundle.dart';
 import '../providers/library_provider.dart';
 import '../theme/app_theme.dart';
+import '../zim/zim_archive.dart';
 import 'bundle_viewer_screen.dart';
 import 'endpoint_form_screen.dart';
 import 'project_list_screen.dart';
 import 'settings_screen.dart';
+import 'zim_viewer_screen.dart';
 
 /// The "library" -- home screen. Saved server endpoints + imported
 /// .hdwreader bundles. This is the only screen with any create/delete
@@ -101,6 +107,32 @@ class HomeScreen extends StatelessWidget {
                 ),
               ),
             ),
+          const SizedBox(height: 24),
+          _SectionHeader(
+            title: '.zim archives',
+            actionIcon: Icons.file_open,
+            onAction: () => _importZim(context),
+          ),
+          if (library.zims.isEmpty)
+            const _EmptyHint(
+              text: 'No .zim archives yet. Import a .zim file (e.g. from Kiwix) to browse and chat with it '
+                  'fully offline -- no server needed to read it.',
+            ),
+          for (final zim in library.zims)
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.folder_zip_outlined),
+                title: Text(zim.title),
+                subtitle: Text(zim.filePath, maxLines: 1, overflow: TextOverflow.ellipsis),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => ZimViewerScreen(zimEntry: zim)),
+                ),
+                trailing: IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () => library.removeZim(zim.id),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -128,6 +160,43 @@ class HomeScreen extends StatelessWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Could not open bundle: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _importZim(BuildContext context) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['zim'],
+      dialogTitle: 'Select a .zim archive',
+    );
+    if (result == null || result.files.single.path == null) return;
+    final pickedPath = result.files.single.path!;
+    if (!context.mounted) return;
+    try {
+      // Copied into the app's own storage (not just referenced in place) --
+      // file_picker's returned path isn't guaranteed to stay valid long-term
+      // on every platform (e.g. Android content-picker cache locations), and
+      // this matches how imported .hdwreader bundles are already handled.
+      final docsDir = await getApplicationDocumentsDirectory();
+      final zimsDir = Directory('${docsDir.path}/zims');
+      if (!await zimsDir.exists()) await zimsDir.create(recursive: true);
+      final id = const Uuid().v4();
+      final destPath = '${zimsDir.path}/$id.zim';
+      await File(pickedPath).copy(destPath);
+
+      final fileName = pickedPath.split(Platform.pathSeparator).last;
+      final archive = await ZimArchive.open(destPath);
+      final metaTitle = await archive.getMetadataString('Title');
+      await archive.close();
+
+      if (!context.mounted) return;
+      await context.read<LibraryProvider>().addZim(destPath, (metaTitle == null || metaTitle.isEmpty) ? fileName : metaTitle);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not import .zim archive: $e')),
         );
       }
     }

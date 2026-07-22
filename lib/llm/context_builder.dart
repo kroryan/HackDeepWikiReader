@@ -13,9 +13,36 @@ import '../models/wiki_models.dart';
 ///
 /// Kept bounded in size on purpose -- most local models (the Ollama case
 /// especially) have small context windows, so this favors "a focused,
-/// relevant slice" over "everything".
-const _maxPageChars = 12000;
+/// relevant slice" over "everything". A wiki backed by a large .zim archive
+/// can have tens of thousands of pages (a real Wikipedia dump: 17,843) --
+/// unconditionally listing every title, like this used to, produces a
+/// prompt many times bigger than any model's context window all on its
+/// own. [_maxPagesListed] caps that list; the SEARCH_WIKI tool (see
+/// [toolCallingInstructions]) is how the model reaches anything not shown.
+const _maxPageChars = 6000;
+const _maxPagesListed = 40;
 const _maxFindingsInPrompt = 25;
+
+/// Mirrors HackDeepWiki's own TOOL_CALLING_INSTRUCTIONS (api/prompts.py) and
+/// its agentic loop's provider-agnostic fallback (api/agent_loop.py's
+/// sniff_and_relay): a plain-text convention that works identically
+/// regardless of provider, since this app -- unlike the backend -- never
+/// special-cases specific providers' native function-calling APIs; every
+/// LlmClient here already exposes the same "stream plain text" shape (see
+/// lib/llm/llm_client.dart), so mirroring the universal fallback covers
+/// 100% of this app's providers with one code path. See
+/// ChatProvider._sendRound for where a `SEARCH_WIKI:` response is
+/// intercepted instead of shown to the user.
+const toolCallingInstructions = '''
+## Tools
+
+You have ONE tool available: searching this wiki for pages you don't already have in front of you (useful when the current page doesn't cover something, or the user asks about a different page/topic than the one open).
+
+To use it, your ENTIRE response must be exactly one line, nothing else:
+SEARCH_WIKI: <search query>
+
+Do not narrate that you're searching ("Let me look that up...") -- either answer directly, or emit only that one line and nothing else. You'll get the results back and can then answer, search again (up to a few times), or say you couldn't find it. Don't call the tool for things already covered by the context already given to you below.
+''';
 
 String buildSystemPrompt({
   required String wikiTitle,
@@ -26,6 +53,7 @@ String buildSystemPrompt({
   VulnReport? vulnReport,
   WebVulnReport? webVulnReport,
   bool includeSecurityContext = false,
+  bool allowToolCalling = true,
 }) {
   final buffer = StringBuffer();
   // Modeled directly on HackDeepWiki's own chat prompt
@@ -68,9 +96,14 @@ String buildSystemPrompt({
   buffer.writeln();
 
   if (structure.pages.isNotEmpty) {
-    buffer.writeln('## Pages in this wiki');
-    for (final p in structure.pages) {
+    buffer.writeln('## Pages in this wiki (${structure.pages.length} total)');
+    final shown = structure.pages.take(_maxPagesListed);
+    for (final p in shown) {
       buffer.writeln('- ${p.title}${currentPage?.id == p.id ? ' (currently open)' : ''}');
+    }
+    if (structure.pages.length > _maxPagesListed) {
+      buffer.writeln(
+          '…and ${structure.pages.length - _maxPagesListed} more, not listed -- use SEARCH_WIKI to find one by topic.');
     }
     buffer.writeln();
   }
@@ -79,10 +112,14 @@ String buildSystemPrompt({
     buffer.writeln('## Currently open page: ${currentPage.title}');
     var content = currentPage.content;
     if (content.length > _maxPageChars) {
-      content = '${content.substring(0, _maxPageChars)}\n…(truncated)';
+      content = '${content.substring(0, _maxPageChars)}\n…(truncated -- use SEARCH_WIKI for more of this page or others)';
     }
     buffer.writeln(content);
     buffer.writeln();
+  }
+
+  if (allowToolCalling && structure.pages.isNotEmpty) {
+    buffer.writeln(toolCallingInstructions);
   }
 
   if (includeSecurityContext) {
