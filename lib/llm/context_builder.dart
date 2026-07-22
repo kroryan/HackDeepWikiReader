@@ -21,16 +21,46 @@ String buildSystemPrompt({
   required String wikiTitle,
   required String wikiDescription,
   required WikiStructure structure,
+  required bool isWebsite,
   WikiPage? currentPage,
   VulnReport? vulnReport,
   WebVulnReport? webVulnReport,
   bool includeSecurityContext = false,
 }) {
   final buffer = StringBuffer();
+  // Modeled directly on HackDeepWiki's own chat prompt
+  // (api/prompts.py::SIMPLE_CHAT_SYSTEM_PROMPT) -- an earlier, stricter
+  // version of this prompt ("answer using ONLY the provided context, say so
+  // if something isn't covered") produced exactly the over-literal,
+  // refuse-to-engage answers that prompt was rewritten to fix on the
+  // backend (e.g. bailing on "what is this?" instead of just answering from
+  // the wiki's own title/description). Reusing that same tone here instead
+  // of re-deriving a stricter one from scratch.
   buffer.writeln(
-    'You are a helpful assistant embedded in HackDeepWikiReader, a read-only wiki '
-    'viewer. Answer questions about the wiki below using only the context provided. '
-    "If something isn't covered by the context, say so instead of guessing.",
+    isWebsite
+        ? 'You are a helpful, knowledgeable assistant embedded in HackDeepWikiReader, looking '
+            'at a wiki generated from the crawled website "$wikiTitle". You have the site\'s '
+            "crawled pages (as Markdown) as context below -- there's no source code here, only "
+            "page content -- and you're having a real conversation with someone exploring this "
+            "site's wiki, not just answering isolated lookup queries."
+        : 'You are a helpful, knowledgeable assistant embedded in HackDeepWikiReader, looking '
+            'at the wiki "$wikiTitle". You have the wiki\'s generated pages as context below, and '
+            "you're having a real conversation with someone exploring it, not just answering "
+            'isolated lookup queries.',
+  );
+  buffer.writeln();
+  buffer.writeln(
+    '- Detect the language the user is writing in and reply in THAT language, even if it '
+    'differs from the wiki\'s own language -- match the user, not a fixed setting.\n'
+    '- Have a natural conversation: answer greetings, meta-questions ("what is this?", "what '
+    'does this cover?"), and follow-ups directly, using the context below plus your own '
+    'reasoning and general knowledge -- you are a chat assistant, not a rigid lookup automaton.\n'
+    '- Ground specific claims in the context when it\'s relevant and cite pages/files when it '
+    'helps, but if the context doesn\'t fully cover something, say what you do know and reason '
+    'about the rest -- never respond with only "I cannot determine this" or refuse to engage.\n'
+    '- Answer directly, without unnecessary preamble, filler phrases, or repeating the question.\n'
+    '- Use markdown formatting where it helps (headings, lists, code blocks); don\'t start with a '
+    '```markdown fence.',
   );
   buffer.writeln();
   buffer.writeln('# Wiki: $wikiTitle');

@@ -66,4 +66,25 @@ class OllamaLlmClient implements LlmClient {
       if (json['done'] == true) break;
     }
   }
+
+  @override
+  Future<List<String>> listModels() async {
+    final uri = Uri.parse('$baseUrl/api/tags');
+    http.Response response;
+    try {
+      response = await http.get(uri).timeout(const Duration(seconds: 10));
+    } catch (e) {
+      throw LlmClientException("Could not reach Ollama at $baseUrl ($e).");
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw LlmClientException('Ollama error (${response.statusCode}): ${response.body}');
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final models = (data['models'] as List? ?? [])
+        .map((m) => (m as Map<String, dynamic>)['name'] as String? ?? '')
+        .where((name) => name.isNotEmpty)
+        .toList();
+    models.sort();
+    return models;
+  }
 }

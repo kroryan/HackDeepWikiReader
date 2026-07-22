@@ -32,6 +32,9 @@ class _LlmConnectionFormScreenState extends State<LlmConnectionFormScreen> {
   String? _testError;
   bool? _testOk;
   bool _obscureKey = true;
+  bool _refreshingModels = false;
+  String? _refreshError;
+  List<String> _availableModels = [];
 
   @override
   void initState() {
@@ -64,6 +67,8 @@ class _LlmConnectionFormScreenState extends State<LlmConnectionFormScreen> {
       }
       _testOk = null;
       _testError = null;
+      _availableModels = [];
+      _refreshError = null;
     });
   }
 
@@ -126,6 +131,37 @@ class _LlmConnectionFormScreenState extends State<LlmConnectionFormScreen> {
                 decoration: InputDecoration(labelText: 'Model', hintText: _preset.modelHint),
                 validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
               ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _refreshingModels ? null : _refreshModels,
+                  icon: _refreshingModels
+                      ? const SizedBox(height: 14, width: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.refresh, size: 18),
+                  label: const Text('Refresh models'),
+                ),
+              ),
+              if (_refreshError != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(_refreshError!, style: TextStyle(color: colors.highlight, fontSize: 12)),
+                ),
+              if (_availableModels.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 4,
+                    children: [
+                      for (final m in _availableModels)
+                        ChoiceChip(
+                          label: Text(m, overflow: TextOverflow.ellipsis),
+                          selected: _modelController.text == m,
+                          onSelected: (_) => setState(() => _modelController.text = m),
+                        ),
+                    ],
+                  ),
+                ),
               const SizedBox(height: 16),
               if (_testOk != null)
                 Padding(
@@ -182,6 +218,49 @@ class _LlmConnectionFormScreenState extends State<LlmConnectionFormScreen> {
     apiKey: _apiKeyController.text.trim().isEmpty ? null : _apiKeyController.text.trim(),
     model: _modelController.text.trim(),
   );
+
+  /// Fetches whatever models the endpoint/credentials currently in the form
+  /// can serve (Ollama: /api/tags, OpenAI-compatible: /models, Anthropic:
+  /// /models) so the user can pick one instead of needing to already know a
+  /// valid model id -- same idea as HackDeepWiki's own provider setup. If
+  /// this isn't used at all (endpoint doesn't support it, or the user just
+  /// skips it), the Model field above stays a plain, always-editable text
+  /// field, so typing one by hand is never blocked on this working.
+  Future<void> _refreshModels() async {
+    if (_baseUrlController.text.trim().isEmpty) {
+      setState(() => _refreshError = 'Enter a base URL first.');
+      return;
+    }
+    if (_preset.needsApiKey && _apiKeyController.text.trim().isEmpty) {
+      setState(() => _refreshError = 'Enter an API key first.');
+      return;
+    }
+    setState(() {
+      _refreshingModels = true;
+      _refreshError = null;
+      _availableModels = [];
+    });
+    try {
+      final client = buildLlmClientFromFields(
+        kind: _preset.kind,
+        baseUrl: _baseUrlController.text.trim(),
+        apiKey: _apiKeyController.text.trim().isEmpty ? null : _apiKeyController.text.trim(),
+      );
+      final models = await client.listModels().timeout(const Duration(seconds: 15));
+      if (!mounted) return;
+      setState(() {
+        _refreshingModels = false;
+        _availableModels = models;
+        if (models.isEmpty) _refreshError = 'This endpoint reported no models.';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _refreshingModels = false;
+        _refreshError = e is LlmClientException ? e.message : e.toString();
+      });
+    }
+  }
 
   Future<void> _testConnection() async {
     if (!_formKey.currentState!.validate()) return;

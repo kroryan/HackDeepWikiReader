@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/chat_overlay_controller.dart';
 import '../providers/wiki_source.dart';
+import '../widgets/wiki_markdown_view.dart';
 import '../widgets/wiki_tree_view.dart';
 import 'security_screen.dart';
 
@@ -97,13 +97,7 @@ class _WikiViewerScreenState extends State<WikiViewerScreen> {
           ? const Center(child: Text('No pages in this wiki.'))
           : SingleChildScrollView(
               padding: const EdgeInsets.all(16),
-              child: MarkdownBody(
-                data: page.content,
-                selectable: true,
-                onTapLink: (text, href, title) {
-                  // External links only (no local repo file browsing in this app).
-                },
-              ),
+              child: WikiMarkdownView(data: page.content),
             ),
     );
   }

@@ -21,6 +21,15 @@ abstract class LlmClient {
   /// gets it via its separate `system` field (its Messages API forbids a
   /// `system` role inside `messages`).
   Stream<String> streamChat({required String? systemPrompt, required List<ChatMessage> messages});
+
+  /// Lists model ids this connection's base URL/credentials can serve right
+  /// now -- backs the "Refresh models" button on the add/edit provider
+  /// form (lib/screens/llm_connection_form_screen.dart), same idea as
+  /// HackDeepWiki's own provider setup: point at an endpoint, fetch what it
+  /// actually has, pick one, instead of needing to already know a valid
+  /// model id. Typing a model id by hand always stays an option -- this is
+  /// a convenience, not a requirement.
+  Future<List<String>> listModels();
 }
 
 class LlmClientException implements Exception {
@@ -46,5 +55,26 @@ LlmClient buildLlmClient(LlmConnection connection) {
         apiKey: connection.apiKey ?? '',
         model: connection.model,
       );
+  }
+}
+
+/// Builds a client from raw form fields rather than a saved [LlmConnection]
+/// -- used by the add/edit provider form's "Test" and "Refresh models"
+/// actions, which need to call a provider before there's anything saved to
+/// build a real connection from yet.
+LlmClient buildLlmClientFromFields({
+  required LlmProviderKind kind,
+  required String baseUrl,
+  String? apiKey,
+  String model = '',
+}) {
+  baseUrl = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
+  switch (kind) {
+    case LlmProviderKind.ollama:
+      return OllamaLlmClient(baseUrl: baseUrl, model: model);
+    case LlmProviderKind.openaiCompatible:
+      return OpenAiCompatibleLlmClient(baseUrl: baseUrl, apiKey: apiKey ?? '', model: model);
+    case LlmProviderKind.anthropic:
+      return AnthropicLlmClient(baseUrl: baseUrl, apiKey: apiKey ?? '', model: model);
   }
 }

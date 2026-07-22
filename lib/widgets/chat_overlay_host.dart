@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../models/chat_models.dart';
@@ -10,6 +9,7 @@ import '../providers/chat_provider.dart';
 import '../providers/settings_provider.dart';
 import '../screens/settings_screen.dart';
 import '../theme/app_theme.dart';
+import 'wiki_markdown_view.dart';
 
 bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
 
@@ -104,22 +104,37 @@ class _DesktopPanel extends StatelessWidget {
       left: overlay.isMaximized ? 32 : null,
       width: overlay.isMaximized ? null : 420,
       height: overlay.isMaximized ? null : 640,
-      child: Material(
-        elevation: 16,
+      // A BoxShadow on a plain DecoratedBox instead of Material(elevation:
+      // ...) -- PhysicalModel-based elevation shadows are a known trigger
+      // for repaint/compositing glitches (a gray/blank flash that only
+      // clears on the next interaction) in the Flutter Linux GTK embedder
+      // when running without a compositing window manager. The inner
+      // Material(type: transparency) is still needed -- it's what lets
+      // buttons/inputs inside find an ink-splash ancestor -- but that type
+      // skips the PhysicalModel paint entirely, unlike a default/elevated
+      // Material.
+      child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
-        clipBehavior: Clip.antiAlias,
-        color: colors.cardBg,
-        child: Column(
-          children: [
-            Container(height: 3, color: colors.accentPrimary),
-            _PanelHeader(
-              title: overlay.source?.title ?? 'Chat',
-              onMaximizeToggle: overlay.toggleMaximize,
-              isMaximized: overlay.isMaximized,
-              onClose: overlay.minimize,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: colors.cardBg,
+            boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 24, spreadRadius: 2)],
+          ),
+          child: Material(
+            type: MaterialType.transparency,
+            child: Column(
+              children: [
+                Container(height: 3, color: colors.accentPrimary),
+                _PanelHeader(
+                  title: overlay.source?.title ?? 'Chat',
+                  onMaximizeToggle: overlay.toggleMaximize,
+                  isMaximized: overlay.isMaximized,
+                  onClose: overlay.minimize,
+                ),
+                const Expanded(child: _ChatPanelBody()),
+              ],
             ),
-            const Expanded(child: _ChatPanelBody()),
-          ],
+          ),
         ),
       ),
     );
@@ -311,12 +326,13 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
               ),
             ],
           ),
-          FilterChip(
-            label: const Text('🔐 Security context'),
-            selected: chat.includeSecurityContext,
-            onSelected: chat.setIncludeSecurityContext,
-            visualDensity: VisualDensity.compact,
-          ),
+          if (chat.securityContextAvailable)
+            FilterChip(
+              label: const Text('🔐 Security context'),
+              selected: chat.includeSecurityContext,
+              onSelected: chat.setIncludeSecurityContext,
+              visualDensity: VisualDensity.compact,
+            ),
         ],
       ),
     );
@@ -449,7 +465,7 @@ class _MessageBubble extends StatelessWidget {
             ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
             : isUser
                 ? Text(text)
-                : MarkdownBody(data: text, selectable: true),
+                : WikiMarkdownView(data: text),
       ),
     );
   }

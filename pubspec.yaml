@@ -35,12 +35,21 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
 
-  # Networking: REST calls to a HackDeepWiki backend + the /ws/chat WebSocket.
+  # Networking: REST calls to a connected HackDeepWiki backend, and this
+  # app's own direct connections to LLM providers (lib/llm/) -- no
+  # WebSocket, chat never proxies through a HackDeepWiki server.
   http: ^1.2.2
-  web_socket_channel: ^3.0.1
 
   # Content rendering.
   flutter_markdown_plus: ^1.0.3
+  # Syntax-highlighted code blocks inside wiki page Markdown, matching the
+  # web app's react-syntax-highlighter treatment (see
+  # lib/widgets/wiki_markdown_view.dart's custom `pre` builder).
+  flutter_highlight: ^0.7.0
+  # Direct dependency (not just transitive via flutter_markdown_plus) --
+  # lib/widgets/wiki_markdown_view.dart imports `markdown`'s Element type
+  # for its custom `pre` builder.
+  markdown: ^7.3.0
   graphview: ^1.2.0
   # Pure-Dart HTML rendering (no native WebView) -- used for .zim entry
   # content, which the backend returns as raw HTML (see

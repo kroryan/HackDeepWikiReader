@@ -70,4 +70,28 @@ class OpenAiCompatibleLlmClient implements LlmClient {
       if (content != null && content.isNotEmpty) yield content;
     }
   }
+
+  @override
+  Future<List<String>> listModels() async {
+    if (apiKey.isEmpty) {
+      throw LlmClientException('No API key configured for this connection. Add one first.');
+    }
+    final uri = Uri.parse('$baseUrl/models');
+    http.Response response;
+    try {
+      response = await http.get(uri, headers: {'Authorization': 'Bearer $apiKey'}).timeout(const Duration(seconds: 10));
+    } catch (e) {
+      throw LlmClientException("Could not reach $baseUrl ($e).");
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw LlmClientException('API error (${response.statusCode}): ${response.body}');
+    }
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final models = (data['data'] as List? ?? [])
+        .map((m) => (m as Map<String, dynamic>)['id'] as String? ?? '')
+        .where((id) => id.isNotEmpty)
+        .toList();
+    models.sort();
+    return models;
+  }
 }

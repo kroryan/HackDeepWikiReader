@@ -35,6 +35,7 @@ class ChatProvider extends ChangeNotifier {
       _activeSessionId = _sessions.first.id;
     }
     _connectionId = settings.defaultConnection?.id;
+    _securityLoadFuture = _loadSecurityContext();
   }
 
   List<ChatSession> _sessions = [];
@@ -48,7 +49,7 @@ class ChatProvider extends ChangeNotifier {
 
   VulnReport? _vulnReport;
   WebVulnReport? _webVulnReport;
-  bool _securityLoadAttempted = false;
+  late final Future<void> _securityLoadFuture;
 
   StreamSubscription<String>? _streamSub;
 
@@ -58,6 +59,23 @@ class ChatProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String get streamingAnswer => _streamingAnswer;
   String? get error => _error;
+
+  /// Whether there's actually a security/web-vuln report to fold into the
+  /// prompt -- backs the 🔐 toggle's visibility, which should only appear
+  /// when there's something for it to include (checked once up front, in
+  /// the constructor, rather than lazily on first send, precisely so the
+  /// toolbar can decide this before the user ever sends a message).
+  bool get securityContextAvailable => _vulnReport != null || _webVulnReport != null;
+
+  Future<void> _loadSecurityContext() async {
+    try {
+      _vulnReport = await source.loadVulnReport();
+    } catch (_) {}
+    try {
+      _webVulnReport = await source.loadWebVulnReport();
+    } catch (_) {}
+    notifyListeners();
+  }
 
   LlmConnection? get activeConnection {
     final id = _connectionId;
@@ -134,20 +152,13 @@ class ChatProvider extends ChangeNotifier {
     final history = [...session.messages, ChatMessage(role: 'user', content: question)];
     _replaceActiveSessionMessages(history, title: session.messages.isEmpty ? question.trim() : null);
 
-    if (includeSecurityContext && !_securityLoadAttempted) {
-      _securityLoadAttempted = true;
-      try {
-        _vulnReport = await source.loadVulnReport();
-      } catch (_) {}
-      try {
-        _webVulnReport = await source.loadWebVulnReport();
-      } catch (_) {}
-    }
+    if (includeSecurityContext) await _securityLoadFuture;
 
     final systemPrompt = buildSystemPrompt(
       wikiTitle: source.title,
       wikiDescription: source.description,
       structure: source.structure,
+      isWebsite: source.isWebsite,
       currentPage: currentPageId != null ? source.structure.pageById(currentPageId!) : null,
       vulnReport: _vulnReport,
       webVulnReport: _webVulnReport,
