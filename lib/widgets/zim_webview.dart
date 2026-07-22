@@ -4,11 +4,12 @@ import 'package:webview_flutter/webview_flutter.dart' as wf;
 import 'package:webview_windows/webview_windows.dart' as ww;
 
 import '../providers/wiki_source.dart';
+import '../utils/app_logger.dart';
 import '../zim/zim_local_server.dart';
 
 /// Renders one .zim entry with a real browser engine -- Android via the
-/// official webview_flutter implementation, Linux via its WebKitGTK-backed
-/// federated implementation, and Windows via webview_windows. All point at a
+/// official webview_flutter implementation, Linux via WebKitGTK, and Windows
+/// via webview_windows. All point at a
 /// loopback-only local HTTP server (lib/zim/zim_local_server.dart) that
 /// serves the archive's own entries, so the browser resolves every
 /// relative link/image/stylesheet itself with full CSS/table support --
@@ -22,7 +23,7 @@ import '../zim/zim_local_server.dart';
 /// running any of it is the one behavior that's uniformly correct for every
 /// archive.
 ///
-/// One server + one native WebView instance lives for as long as this
+/// One server + one WebView instance lives for as long as this
 /// widget stays mounted (i.e. for the WikiViewerScreen's whole lifetime,
 /// not per-page) -- navigating to a different entry calls loadUrl/
 /// loadRequest on the existing controller, the same way a normal browser
@@ -31,12 +32,14 @@ class ZimWebViewPage extends StatefulWidget {
   final ZimWikiSource source;
   final String path;
   final ValueChanged<String> onNavigate;
+  final bool visible;
 
   const ZimWebViewPage({
     super.key,
     required this.source,
     required this.path,
     required this.onNavigate,
+    this.visible = true,
   });
 
   @override
@@ -45,11 +48,12 @@ class ZimWebViewPage extends StatefulWidget {
 
 class _ZimWebViewPageState extends State<ZimWebViewPage> {
   ZimLocalServer? _server;
-  wf.WebViewController? _androidController;
+  wf.WebViewController? _webController;
   ww.WebviewController? _windowsController;
   bool _windowsReady = false;
   String? _error;
   String? _loadedPath;
+  Stopwatch? _pageLoadStopwatch;
 
   @override
   void initState() {
@@ -60,7 +64,14 @@ class _ZimWebViewPageState extends State<ZimWebViewPage> {
   @override
   void didUpdateWidget(covariant ZimWebViewPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.path != oldWidget.path) _loadPath(widget.path);
+    // A click inside WebKit updates _loadedPath before notifying the parent.
+    // When the parent rebuilds with that path, WebKit is already performing
+    // the navigation; issuing loadRequest again here cancels/restarts the
+    // policy decision and can leave the native view black. Drawer/index
+    // selections have a different path than _loadedPath and still load.
+    if (widget.path != oldWidget.path && widget.path != _loadedPath) {
+      _loadPath(widget.path);
+    }
   }
 
   Future<void> _init() async {
@@ -78,9 +89,30 @@ class _ZimWebViewPageState extends State<ZimWebViewPage> {
         final controller = wf.WebViewController()
           ..setJavaScriptMode(wf.JavaScriptMode.disabled)
           ..setNavigationDelegate(
-            wf.NavigationDelegate(onNavigationRequest: _onNavigationRequest),
+            wf.NavigationDelegate(
+              onNavigationRequest: _onNavigationRequest,
+              onPageStarted: (url) {
+                _pageLoadStopwatch = Stopwatch()..start();
+                AppLogger.instance.info('ZIM WebView started $url');
+              },
+              onPageFinished: (url) {
+                final elapsed = _pageLoadStopwatch?.elapsedMilliseconds;
+                _pageLoadStopwatch?.stop();
+                AppLogger.instance.info(
+                  'ZIM WebView finished ${elapsed ?? -1}ms $url',
+                );
+              },
+              onWebResourceError: (error) {
+                if (error.isForMainFrame == true && mounted) {
+                  AppLogger.instance.warn(
+                    'ZIM WebView main-frame error: ${error.description}',
+                  );
+                  setState(() => _error = error.description);
+                }
+              },
+            ),
           );
-        setState(() => _androidController = controller);
+        setState(() => _webController = controller);
         await _loadPath(widget.path);
       } else if (defaultTargetPlatform == TargetPlatform.windows) {
         final controller = ww.WebviewController();
@@ -105,9 +137,14 @@ class _ZimWebViewPageState extends State<ZimWebViewPage> {
     final server = _server;
     if (server == null) return;
     _loadedPath = path;
+    if (mounted) {
+      setState(() {
+        _error = null;
+      });
+    }
     final url = server.urlForPath(path);
-    if (_androidController != null) {
-      await _androidController!.loadRequest(url);
+    if (_webController != null) {
+      await _webController!.loadRequest(url);
     } else if (_windowsController != null) {
       await _windowsController!.loadUrl(url.toString());
     }
@@ -158,8 +195,14 @@ class _ZimWebViewPageState extends State<ZimWebViewPage> {
         ),
       );
     }
-    if (_androidController != null) {
-      return wf.WebViewWidget(controller: _androidController!);
+    if (_webController != null && widget.visible) {
+      return wf.WebViewWidget(controller: _webController!);
+    }
+    if (_webController != null) {
+      // On Linux a hidden native WebKit view means Flutter temporarily owns
+      // this area (drawer or maximized chat). Avoid showing a misleading
+      // perpetual loader behind those overlays.
+      return const SizedBox.expand();
     }
     if (_windowsReady && _windowsController != null) {
       return ww.Webview(_windowsController!);

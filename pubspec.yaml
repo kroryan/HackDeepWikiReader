@@ -57,23 +57,22 @@ dependencies:
   markdown: ^7.3.0
   graphview: ^1.2.0
   # .zim entry rendering (lib/widgets/zim_html_view.dart, zim_webview.dart):
-  # flutter_html is the fallback everywhere no real WebView plugin exists
-  # (Linux has none from the Flutter team). It has no CSS/table engine
+  # flutter_html is the fallback everywhere no real WebView plugin exists.
+  # It has no CSS/table engine
   # anywhere close to a real browser's, so complex real-world .zim HTML
   # (e.g. full Wikipedia dumps, with heavy infobox tables/CSS) renders best-
   # effort there, not pixel-correct -- see zim_webview.dart for the
-  # Android/Windows path, which uses a real browser engine instead.
+  # Android/Linux/Windows path, which uses a real browser engine instead.
   flutter_html: ^3.0.0
   # Real browser engine for .zim rendering on Android -- WebView-based, so
   # full CSS/table support instead of flutter_html's subset. Points at
   # lib/zim/zim_local_server.dart's loopback HTTP server, never the network.
   webview_flutter: ^4.13.1
-  # Linux implementation of webview_flutter, backed by WebKitGTK. ZIM
-  # documents are real web documents (HTML + CSS + images/fonts), so the
-  # flutter_html reader-mode fallback cannot reproduce their intended
-  # layout. This plugin lets Linux use the same local-HTTP/WebView path as
-  # Android while keeping JavaScript disabled.
-  webview_win_floating: ^3.0.3
+  # Linux uses WebKitGTK inside a GtkOverlay prepared by the native runner
+  # before Flutter's GL view is realized. This keeps full browser layout
+  # without WPE's broken DMA-BUF path or late GL-view reparenting.
+  webview_all_linux:
+    path: third_party/webview_all_linux
   # Same idea for Windows (WebView2/Edge) -- a different package because
   # webview_flutter itself has no Windows implementation.
   webview_windows: ^0.4.0

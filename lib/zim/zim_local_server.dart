@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import '../utils/app_logger.dart';
 import 'zim_archive.dart';
 
 /// Loopback-only HTTP server that serves one .zim archive's entries by
@@ -46,6 +47,8 @@ class ZimLocalServer {
   }
 
   Future<void> _handle(HttpRequest request) async {
+    final stopwatch = Stopwatch()..start();
+    final requestPath = request.uri.pathSegments.join('/');
     _setSecurityHeaders(request.response);
     if (request.method != 'GET' && request.method != 'HEAD') {
       request.response.statusCode = HttpStatus.methodNotAllowed;
@@ -54,7 +57,7 @@ class ZimLocalServer {
       return;
     }
 
-    final path = request.uri.pathSegments.join('/');
+    final path = requestPath;
     try {
       final resolvedPath = await archive.resolveEntryPath(path);
       if (resolvedPath == null) {
@@ -89,6 +92,13 @@ class ZimLocalServer {
       request.response.statusCode = HttpStatus.internalServerError;
       request.response.write('$e');
       await request.response.close();
+    } finally {
+      stopwatch.stop();
+      if (stopwatch.elapsedMilliseconds >= 500) {
+        AppLogger.instance.warn(
+          'Slow ZIM asset: ${stopwatch.elapsedMilliseconds}ms $requestPath',
+        );
+      }
     }
   }
 

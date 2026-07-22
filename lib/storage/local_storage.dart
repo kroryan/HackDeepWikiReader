@@ -1,4 +1,6 @@
-import 'package:hive_flutter/hive_flutter.dart';
+import 'dart:io';
+
+import 'package:hive/hive.dart';
 
 import '../models/app_settings.dart';
 import '../models/bundle_entry.dart';
@@ -6,6 +8,7 @@ import '../models/chat_models.dart';
 import '../models/endpoint.dart';
 import '../models/llm_config.dart';
 import '../models/zim_entry.dart';
+import 'app_directories.dart';
 
 /// Local persistence -- saved endpoints, imported bundle library, per-wiki
 /// chat history, the app's own LLM connections, and app settings.
@@ -22,7 +25,7 @@ class LocalStorage {
   static const _settingsKey = 'app_settings';
 
   static Future<void> init() async {
-    await Hive.initFlutter();
+    Hive.init(AppDirectories.data.path);
     await Future.wait([
       Hive.openBox<Map>(_endpointsBox),
       Hive.openBox<Map>(_bundlesBox),
@@ -31,6 +34,29 @@ class LocalStorage {
       Hive.openBox<Map>(_llmConnectionsBox),
       Hive.openBox<Map>(_settingsBox),
     ]);
+    await _migrateZimPaths();
+  }
+
+  static Future<void> _migrateZimPaths() async {
+    final box = Hive.box<Map>(_zimsBox);
+    for (final key in box.keys.toList(growable: false)) {
+      final raw = box.get(key);
+      if (raw == null) continue;
+      final entry = ZimEntry.fromJson(Map<String, dynamic>.from(raw));
+      final migratedPath = AppDirectories.migratedZimPath(entry.filePath);
+      if (migratedPath == entry.filePath || !File(migratedPath).existsSync()) {
+        continue;
+      }
+      await box.put(
+        key,
+        ZimEntry(
+          id: entry.id,
+          filePath: migratedPath,
+          title: entry.title,
+          importedAt: entry.importedAt,
+        ).toJson(),
+      );
+    }
   }
 
   // --- Endpoints ---

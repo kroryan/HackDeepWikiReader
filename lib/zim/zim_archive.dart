@@ -122,7 +122,8 @@ class ZimArchive {
   final List<int> _urlPtrs;
   final Map<int, _DecodedCluster> _clusterCache = {};
   final List<int> _clusterCacheOrder = [];
-  static const _maxCachedClusters = 12;
+  final Map<int, Future<_DecodedCluster>> _clusterLoads = {};
+  static const _maxCachedClusters = 32;
 
   String? _mainPagePath;
   bool _mainPageResolved = false;
@@ -371,15 +372,19 @@ class ZimArchive {
     final d = await _resolveDirent(path);
     if (d == null) return null;
     final cluster = await _readCluster(d.cluster);
-    final blobs = _splitBlobs(cluster.data, cluster.extended);
+    final blobs = cluster.blobOffsets;
     if (d.blob + 1 >= blobs.length) return null;
-    final bytes = cluster.data.sublist(blobs[d.blob], blobs[d.blob + 1]);
+    final bytes = Uint8List.sublistView(
+      cluster.data,
+      blobs[d.blob],
+      blobs[d.blob + 1],
+    );
     var mimetype = mimetypeFor(d);
     if (mimetype.isEmpty || mimetype == 'application/octet-stream') {
       final guessed = _guessMimetypeFromPath(d.url);
       if (guessed != null) mimetype = guessed;
     }
-    return ZimEntryContent(Uint8List.fromList(bytes), mimetype);
+    return ZimEntryContent(bytes, mimetype);
   }
 
   String? _guessMimetypeFromPath(String path) {
@@ -441,6 +446,23 @@ class ZimArchive {
     final cached = _clusterCache[clusterIndex];
     if (cached != null) return cached;
 
+    // A browser asks for many CSS/image/font resources concurrently. ZIMs
+    // intentionally group related blobs in the same compressed cluster; if
+    // every request starts decompression before the first one fills the
+    // cache, the same cluster can be decoded dozens of times and the page
+    // appears to hang. Share the single in-flight decode instead.
+    final inFlight = _clusterLoads[clusterIndex];
+    if (inFlight != null) return inFlight;
+    final load = _decodeCluster(clusterIndex);
+    _clusterLoads[clusterIndex] = load;
+    try {
+      return await load;
+    } finally {
+      _clusterLoads.remove(clusterIndex);
+    }
+  }
+
+  Future<_DecodedCluster> _decodeCluster(int clusterIndex) async {
     final start = await _clusterStart(clusterIndex);
     int end;
     if (clusterIndex + 1 < header.clusterCount) {
@@ -482,7 +504,10 @@ class ZimArchive {
         );
     }
 
-    final result = _DecodedCluster(decompressed, extended);
+    final result = _DecodedCluster(
+      decompressed,
+      _splitBlobs(decompressed, extended),
+    );
     _clusterCache[clusterIndex] = result;
     _clusterCacheOrder.add(clusterIndex);
     if (_clusterCacheOrder.length > _maxCachedClusters) {
@@ -524,6 +549,6 @@ class ZimArchive {
 
 class _DecodedCluster {
   final Uint8List data;
-  final bool extended;
-  const _DecodedCluster(this.data, this.extended);
+  final List<int> blobOffsets;
+  const _DecodedCluster(this.data, this.blobOffsets);
 }

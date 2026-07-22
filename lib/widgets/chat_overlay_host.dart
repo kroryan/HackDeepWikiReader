@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/chat_models.dart';
@@ -9,7 +10,6 @@ import '../providers/chat_provider.dart';
 import '../providers/settings_provider.dart';
 import '../screens/settings_screen.dart';
 import '../theme/app_theme.dart';
-import '../utils/app_logger.dart';
 import 'wiki_markdown_view.dart';
 
 bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
@@ -76,7 +76,8 @@ class ChatOverlayHost extends StatelessWidget {
 /// (the toolbar DropdownButton's menu, the History bottom sheet) DO get
 /// their own transient barriers, which is correct and expected for menus.
 class _ChatHomeRoute extends OverlayRoute<void> {
-  _ChatHomeRoute({required this.builder}) : super(settings: const RouteSettings(name: '/'));
+  _ChatHomeRoute({required this.builder})
+    : super(settings: const RouteSettings(name: '/'));
   final WidgetBuilder builder;
 
   @override
@@ -96,18 +97,15 @@ class _ChatOverlayContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final overlay = context.watch<ChatOverlayController>();
     if (!overlay.hasSession) {
-      AppLogger.instance.info('overlay-content build -> no session');
       return const SizedBox.shrink();
     }
 
     if (!overlay.isOpen) {
-      AppLogger.instance.info('overlay-content build -> minimized bubble');
       return _MinimizedBubble(overlay: overlay);
     }
-    final which = _isAndroid ? 'android-fullscreen' : 'desktop-panel';
-    AppLogger.instance
-        .info('overlay-content build -> $which maximized=${overlay.isMaximized}');
-    return _isAndroid ? _AndroidFullscreenPanel(overlay: overlay) : _DesktopPanel(overlay: overlay);
+    return _isAndroid
+        ? _AndroidFullscreenPanel(overlay: overlay)
+        : _DesktopPanel(overlay: overlay);
   }
 }
 
@@ -133,7 +131,9 @@ class _MinimizedBubble extends StatelessWidget {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: Theme.of(context).appColors.accentPrimary,
-                boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 16)],
+                boxShadow: const [
+                  BoxShadow(color: Colors.black38, blurRadius: 16),
+                ],
               ),
               child: Stack(
                 alignment: Alignment.center,
@@ -146,7 +146,10 @@ class _MinimizedBubble extends StatelessWidget {
                       child: SizedBox(
                         width: 12,
                         height: 12,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.black,
+                        ),
                       ),
                     ),
                 ],
@@ -187,7 +190,9 @@ class _DesktopPanel extends StatelessWidget {
         child: DecoratedBox(
           decoration: BoxDecoration(
             color: colors.cardBg,
-            boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 24, spreadRadius: 2)],
+            boxShadow: const [
+              BoxShadow(color: Colors.black38, blurRadius: 24, spreadRadius: 2),
+            ],
           ),
           child: Material(
             type: MaterialType.transparency,
@@ -261,17 +266,30 @@ class _PanelHeader extends StatelessWidget {
     final colors = Theme.of(context).appColors;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: colors.borderColor))),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: colors.borderColor)),
+      ),
       child: Row(
         children: [
-          Icon(Icons.chat_bubble_outline, color: colors.accentPrimary, size: 18),
+          Icon(
+            Icons.chat_bubble_outline,
+            color: colors.accentPrimary,
+            size: 18,
+          ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(title, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600)),
+            child: Text(
+              title,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
           ),
           if (onMaximizeToggle != null)
             IconButton(
-              icon: Icon(isMaximized ? Icons.close_fullscreen : Icons.open_in_full, size: 18),
+              icon: Icon(
+                isMaximized ? Icons.close_fullscreen : Icons.open_in_full,
+                size: 18,
+              ),
               tooltip: isMaximized ? 'Restore' : 'Maximize',
               onPressed: onMaximizeToggle,
               visualDensity: VisualDensity.compact,
@@ -321,27 +339,40 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
       value: chat,
       child: Consumer<ChatProvider>(
         builder: (context, chat, _) {
-          WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+          WidgetsBinding.instance.addPostFrameCallback(
+            (_) => _scrollToBottom(),
+          );
           return Column(
             children: [
               _buildToolbar(context, chat, settings),
               Expanded(
-                child: ListView(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.all(12),
-                  children: [
-                    for (final m in chat.activeSession.messages) _MessageBubble(message: m),
-                    if (chat.isLoading && chat.toolStatus != null) _ToolStatusBubble(text: chat.toolStatus!),
-                    if (chat.isLoading && chat.toolStatus == null) _MessageBubble.streaming(text: chat.streamingAnswer),
-                    if (chat.error != null)
-                      Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: Text(
-                          chat.error!,
-                          style: TextStyle(color: Theme.of(context).appColors.highlight, fontSize: 12),
+                // One selection registrar for the complete transcript lets
+                // a drag selection continue across several user/assistant
+                // messages instead of stopping at each bubble boundary.
+                child: SelectionArea(
+                  child: ListView(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(12),
+                    children: [
+                      for (final m in chat.activeSession.messages)
+                        _MessageBubble(message: m),
+                      if (chat.isLoading && chat.toolStatus != null)
+                        _ToolStatusBubble(text: chat.toolStatus!),
+                      if (chat.isLoading && chat.toolStatus == null)
+                        _MessageBubble.streaming(text: chat.streamingAnswer),
+                      if (chat.error != null)
+                        Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Text(
+                            chat.error!,
+                            style: TextStyle(
+                              color: Theme.of(context).appColors.highlight,
+                              fontSize: 12,
+                            ),
+                          ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
               _buildComposer(context, chat),
@@ -361,7 +392,11 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
     );
   }
 
-  Widget _buildToolbar(BuildContext context, ChatProvider chat, SettingsProvider settings) {
+  Widget _buildToolbar(
+    BuildContext context,
+    ChatProvider chat,
+    SettingsProvider settings,
+  ) {
     final active = chat.activeConnection;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -377,7 +412,10 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
                   underline: const SizedBox.shrink(),
                   items: [
                     for (final c in settings.connections)
-                      DropdownMenuItem(value: c.id, child: Text(c.name, overflow: TextOverflow.ellipsis)),
+                      DropdownMenuItem(
+                        value: c.id,
+                        child: Text(c.name, overflow: TextOverflow.ellipsis),
+                      ),
                   ],
                   onChanged: chat.setConnection,
                 ),
@@ -446,7 +484,9 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
             Expanded(
               child: TextField(
                 controller: _controller,
-                decoration: const InputDecoration(hintText: 'Ask about this wiki…'),
+                decoration: const InputDecoration(
+                  hintText: 'Ask about this wiki…',
+                ),
                 onSubmitted: (_) => _send(chat),
                 enabled: !chat.isLoading,
                 minLines: 1,
@@ -455,7 +495,11 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
             ),
             IconButton(
               icon: chat.isLoading
-                  ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  ? const SizedBox(
+                      height: 18,
+                      width: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
                   : const Icon(Icons.send),
               onPressed: chat.isLoading ? null : () => _send(chat),
             ),
@@ -485,7 +529,11 @@ class _NoProviderNotice extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.settings_suggest_outlined, size: 40, color: colors.muted),
+            Icon(
+              Icons.settings_suggest_outlined,
+              size: 40,
+              color: colors.muted,
+            ),
             const SizedBox(height: 12),
             Text(
               'No LLM provider configured yet.\nGo to Settings to add one before you can chat.',
@@ -496,8 +544,9 @@ class _NoProviderNotice extends StatelessWidget {
             ElevatedButton.icon(
               icon: const Icon(Icons.settings),
               label: const Text('Open Settings'),
-              onPressed: () => rootNavigatorKey.currentState
-                  ?.push(MaterialPageRoute(builder: (_) => const SettingsScreen())),
+              onPressed: () => rootNavigatorKey.currentState?.push(
+                MaterialPageRoute(builder: (_) => const SettingsScreen()),
+              ),
             ),
           ],
         ),
@@ -536,7 +585,14 @@ class _ToolStatusBubble extends StatelessWidget {
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
             const SizedBox(width: 8),
-            Text(text, style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic, color: colors.muted)),
+            Text(
+              text,
+              style: TextStyle(
+                fontSize: 12,
+                fontStyle: FontStyle.italic,
+                color: colors.muted,
+              ),
+            ),
           ],
         ),
       ),
@@ -549,8 +605,8 @@ class _MessageBubble extends StatelessWidget {
   final String text;
 
   _MessageBubble({required ChatMessage message})
-      : role = message.role,
-        text = message.content;
+    : role = message.role,
+      text = message.content;
 
   const _MessageBubble.streaming({required this.text}) : role = 'assistant';
 
@@ -565,15 +621,53 @@ class _MessageBubble extends StatelessWidget {
         padding: const EdgeInsets.all(10),
         constraints: const BoxConstraints(maxWidth: 480),
         decoration: BoxDecoration(
-          color: isUser ? colors.accentPrimary.withValues(alpha: 0.15) : colors.inputBg,
+          color: isUser
+              ? colors.accentPrimary.withValues(alpha: 0.15)
+              : colors.inputBg,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: colors.borderColor),
         ),
         child: text.isEmpty
-            ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
-            : isUser
-                ? Text(text)
-                : WikiMarkdownView(data: text, selectable: false),
+            ? const SizedBox(
+                height: 16,
+                width: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        isUser ? 'You' : 'Assistant',
+                        style: TextStyle(
+                          color: colors.muted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.copy_outlined, size: 16),
+                        tooltip: 'Copy message',
+                        visualDensity: VisualDensity.compact,
+                        constraints: const BoxConstraints(
+                          minWidth: 32,
+                          minHeight: 32,
+                        ),
+                        padding: EdgeInsets.zero,
+                        onPressed: () =>
+                            Clipboard.setData(ClipboardData(text: text)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  if (isUser)
+                    Text(text)
+                  else
+                    WikiMarkdownView(data: text, selectable: false),
+                ],
+              ),
       ),
     );
   }

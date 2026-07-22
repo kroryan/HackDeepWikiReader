@@ -2,12 +2,12 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../bundle/hdwreader_bundle.dart';
 import '../providers/library_provider.dart';
+import '../storage/app_directories.dart';
 import '../theme/app_theme.dart';
 import '../zim/zim_archive.dart';
 import 'bundle_viewer_screen.dart';
@@ -179,8 +179,7 @@ class HomeScreen extends StatelessWidget {
       // file_picker's returned path isn't guaranteed to stay valid long-term
       // on every platform (e.g. Android content-picker cache locations), and
       // this matches how imported .hdwreader bundles are already handled.
-      final docsDir = await getApplicationDocumentsDirectory();
-      final zimsDir = Directory('${docsDir.path}/zims');
+      final zimsDir = AppDirectories.zims;
       if (!await zimsDir.exists()) await zimsDir.create(recursive: true);
       final id = const Uuid().v4();
       final destPath = '${zimsDir.path}/$id.zim';

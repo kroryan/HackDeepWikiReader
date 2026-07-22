@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:webview_all_linux/webview_all_linux.dart';
 
 import 'models/app_settings.dart';
 import 'navigation.dart';
@@ -8,6 +9,7 @@ import 'providers/chat_overlay_controller.dart';
 import 'providers/library_provider.dart';
 import 'providers/settings_provider.dart';
 import 'screens/home_screen.dart';
+import 'storage/app_directories.dart';
 import 'storage/local_storage.dart';
 import 'theme/app_theme.dart';
 import 'utils/app_logger.dart';
@@ -15,6 +17,10 @@ import 'widgets/chat_overlay_host.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.linux) {
+    LinuxWebViewPlatform.registerWith();
+  }
+  await AppDirectories.init();
   // Logger first -- before anything that can throw, so a startup crash in
   // LocalStorage.init (Hive lock, bad box) is captured too.
   await AppLogger.instance.init();

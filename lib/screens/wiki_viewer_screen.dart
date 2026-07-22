@@ -14,8 +14,8 @@ import '../widgets/zim_webview.dart';
 import 'security_screen.dart';
 
 /// ZIM pages need a real browser layout engine on every supported platform.
-/// Linux gets its webview_flutter implementation from webview_win_floating
-/// (WebKitGTK); Android and Windows keep their existing implementations.
+/// Linux uses WebKitGTK hosted by the runner's native GtkOverlay; Android and
+/// Windows keep their existing implementations.
 bool get _hasZimWebView =>
     defaultTargetPlatform == TargetPlatform.android ||
     defaultTargetPlatform == TargetPlatform.linux ||
@@ -82,26 +82,24 @@ class _WikiViewerScreenState extends State<WikiViewerScreen> {
     final linuxZim =
         defaultTargetPlatform == TargetPlatform.linux &&
         widget.source is ZimWikiSource;
-    final currentChatOpen =
-        linuxZim &&
-        overlay.isOpen &&
-        overlay.source?.sourceId == widget.source.sourceId;
+    final chatBelongsHere = overlay.source?.sourceId == widget.source.sourceId;
+    final currentChatOpen = linuxZim && chatBelongsHere && overlay.isOpen;
     final currentChatMinimized =
-        linuxZim &&
-        overlay.hasSession &&
-        !overlay.isOpen &&
-        overlay.source?.sourceId == widget.source.sourceId;
+        linuxZim && chatBelongsHere && overlay.hasSession && !overlay.isOpen;
     final canShowWebViewBesideChat = MediaQuery.sizeOf(context).width >= 760;
-    final hideNativeWebView =
+    final hideLinuxWebView =
         linuxZim &&
         (_drawerOpen ||
             (currentChatOpen &&
                 (overlay.isMaximized || !canShowWebViewBesideChat)));
+    // WebKitGTK is a native sibling above Flutter. Leave it visible beside
+    // the normal desktop chat panel, but reserve the panel's complete area
+    // so it cannot cover or intercept the chat. The smaller strip keeps the
+    // minimized chat bubble clickable too. Only the maximized panel needs
+    // the native view hidden entirely.
     final chatSpace =
         currentChatOpen && !overlay.isMaximized && canShowWebViewBesideChat
         ? 468.0
-        // Native Linux views always sit above Flutter's compositor. Keep a
-        // small real strip for the minimized chat bubble as well.
         : currentChatMinimized
         ? 88.0
         : 0.0;
@@ -114,6 +112,7 @@ class _WikiViewerScreenState extends State<WikiViewerScreen> {
                   source: widget.source as ZimWikiSource,
                   path: page.id,
                   onNavigate: _navigateTo,
+                  visible: !hideLinuxWebView,
                 )
               : _ZimPageBody(
                   source: widget.source as ZimWikiSource,
@@ -124,18 +123,16 @@ class _WikiViewerScreenState extends State<WikiViewerScreen> {
             padding: const EdgeInsets.all(16),
             child: WikiMarkdownView(data: page.content),
           );
-    if (hideNativeWebView) {
-      pageBody = const SizedBox.expand();
-    } else if (chatSpace > 0) {
-      // Linux WebKitGTK is a native surface: Flutter cannot paint the chat
-      // over it. Shrink the actual WebView bounds so the floating panel owns
-      // a real, non-overlapping strip on the right.
+    // Keep this wrapper in the tree even when its padding is zero. Adding
+    // and removing it dynamically changes the element ancestry and remounts
+    // ZimWebViewPage, which creates a second native WebKit widget while the
+    // chat is animating and can leave that old surface above the panel.
+    if (linuxZim) {
       pageBody = Padding(
         padding: EdgeInsets.only(right: chatSpace),
         child: pageBody,
       );
     }
-
     return Scaffold(
       appBar: AppBar(
         // Scaffold only auto-shows ONE leading icon, and having a `drawer`
@@ -173,13 +170,9 @@ class _WikiViewerScreenState extends State<WikiViewerScreen> {
             ),
           IconButton(
             icon: Icon(
-              context.watch<ChatOverlayController>().isOpen
-                  ? Icons.chat_bubble
-                  : Icons.chat_bubble_outline,
+              overlay.isOpen ? Icons.chat_bubble : Icons.chat_bubble_outline,
             ),
-            tooltip: context.watch<ChatOverlayController>().isOpen
-                ? 'Hide chat'
-                : 'Chat',
+            tooltip: overlay.isOpen ? 'Hide chat' : 'Chat',
             onPressed: () => context.read<ChatOverlayController>().toggle(
               widget.source,
               currentPageId: _currentPageId,

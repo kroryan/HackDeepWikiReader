@@ -9,9 +9,12 @@ It never generates wikis and never triggers a security scan — those stay in th
 - **Read** the generated wiki pages, with the same section/page hierarchy the web app shows.
 - **View Security Analysis / Website Security** reports — findings, severity breakdown, interactive graph, version history — for repos and websites alike.
 - **Chat, fully independent of any HackDeepWiki server**: this app talks directly to your own configured LLM provider (Ollama, ChatGPT/OpenAI, any custom OpenAI-compatible endpoint, or Anthropic Claude — set these up under Settings) and builds its own context from the wiki content already loaded locally, rather than proxying through a backend. Toggle 🔐 "Security context" to fold the latest saved scan report into that context. Chat runs as a floating panel with a maximize toggle on Linux/Windows (mirroring the web app's own chat widget), and full-screen-but-minimizable on Android — the conversation keeps running in the background either way, even after leaving the wiki, until you send it a new message. This is the core of the app — everything else is in service of it.
+- **Select and copy content** across complete wiki pages or chat transcripts; every user and assistant message also has its own copy button.
 - **Open a `.hdwreader` bundle** — a portable, fully offline export produced by HackDeepWiki's web app (the "Export for HackDeepWikiReader" button, next to the Obsidian export) — for reading a wiki (optionally with its security report) with no server connection at all.
 
 Imported `.zim` archives are parsed locally and served only to an in-app browser on `127.0.0.1`. Android uses its system WebView, Linux uses WebKitGTK and Windows uses WebView2, so archive HTML gets a real browser layout engine for its images, fonts, tables, flexbox and grid. JavaScript and external navigation stay disabled. Chat extracts the current ZIM page as plain text and sends it directly to the LLM provider configured in the reader, exactly like the other local wiki sources.
+
+The reader keeps its database, imported ZIMs and logs in the platform's private application-support directory. On Linux this is normally `~/.local/share/com.kroryan.hackdeepwikireader/{data,zims,logs}`; affected older files are migrated out of `Documents` at startup.
 
 ## Getting the app
 
@@ -25,7 +28,7 @@ Every push to `main` publishes a rolling pre-release; tagged commits (`vX.Y.Z`) 
 
 Requires the [Flutter SDK](https://docs.flutter.dev/get-started/install) (stable channel) plus, per target:
 
-- **Linux desktop**: `clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev liblzma-dev libstdc++-12-dev`
+- **Linux desktop**: `clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev liblzma-dev libstdc++-12-dev`
 - **Android**: Android SDK (cmdline-tools, platform-tools, `platforms;android-34`, `build-tools;34.0.0`) and a JDK 17 or 21 (not a bleeding-edge JDK — the Android Gradle Plugin doesn't yet support them)
 - **Windows**: Visual Studio with the "Desktop development with C++" workload
 
@@ -40,7 +43,7 @@ flutter build apk --release       # build/app/outputs/flutter-apk/app-release.ap
 flutter build appbundle --release # build/app/outputs/bundle/release/app-release.aab
 ```
 
-The packaged Linux app also needs the WebKitGTK 4.1 runtime (`libwebkit2gtk-4.1-0` on Debian/Ubuntu/Kali). It uses a small bundled launcher to select WebKitGTK's software compositor before Flutter starts, avoiding the X11/GLX drawable conflict that otherwise occurs when a ZIM WebView opens.
+The Linux runner creates its `GtkOverlay` before Flutter's GL view is realized, then hosts WebKitGTK there. This preserves the archive's browser layout without the X11/GLX crash caused by reparenting an already-running Flutter view.
 
 ## Architecture
 

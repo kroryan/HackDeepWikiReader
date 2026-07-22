@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
+
+import '../storage/app_directories.dart';
 
 /// Tiny always-on file logger. The whole point of this file is to stop
 /// guessing at the chat's "goes blank" bug: every unhandled exception (build
@@ -11,7 +12,7 @@ import 'package:path_provider/path_provider.dart';
 /// path. One fresh log file per app launch (truncated at startup) so the
 /// file always reflects the run you just did.
 ///
-/// The log lives next to the Hive boxes in the app's documents directory.
+/// The log lives in the app's private support directory.
 /// The resolved path is printed to stdout on startup (so `flutter run` /
 /// the bundled binary's stderr shows it) and written as the first line.
 class AppLogger {
@@ -27,17 +28,10 @@ class AppLogger {
     return '${t.year}-${p(t.month)}-${p(t.day)} ${p(t.hour)}:${p(t.minute)}:${p(t.second)}.${t.millisecond.toString().padLeft(3, '0')}';
   }
 
-  /// Resolves the log file path (in the app documents dir), truncates it, and
+  /// Resolves the private log file path, truncates it, and
   /// wires the global error handlers so nothing escapes unlogged.
   Future<void> init() async {
-    Directory dir;
-    try {
-      dir = await getApplicationDocumentsDirectory();
-    } catch (e, st) {
-      // Fall back to CWD if path_provider blows up -- still log somewhere.
-      dir = Directory.current;
-      _raw('LOG INIT: path_provider failed ($e); falling back to ${dir.path}\n$st');
-    }
+    final dir = AppDirectories.logs;
     _path = '${dir.path}${Platform.pathSeparator}hackdeepwikireader.log';
     // Truncate so each launch starts clean.
     File(_path!).writeAsStringSync('=== HackDeepWikiReader log started $_stamp ===\n');
