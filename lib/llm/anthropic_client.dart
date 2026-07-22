@@ -40,7 +40,11 @@ class AnthropicLlmClient implements LlmClient {
   }
 
   @override
-  Stream<String> streamChat({required String? systemPrompt, required List<ChatMessage> messages}) async* {
+  Stream<String> streamChat({
+    required String? systemPrompt,
+    required List<ChatMessage> messages,
+    void Function(String delta)? onThinking,
+  }) async* {
     if (apiKey.isEmpty) {
       throw LlmClientException(
         'No Anthropic API key (or subscription token) configured for this connection. Add one in Settings.',

@@ -21,7 +21,11 @@ class OpenAiCompatibleLlmClient implements LlmClient {
   OpenAiCompatibleLlmClient({required this.baseUrl, required this.apiKey, required this.model});
 
   @override
-  Stream<String> streamChat({required String? systemPrompt, required List<ChatMessage> messages}) async* {
+  Stream<String> streamChat({
+    required String? systemPrompt,
+    required List<ChatMessage> messages,
+    void Function(String delta)? onThinking,
+  }) async* {
     if (apiKey.isEmpty) {
       throw LlmClientException('No API key configured for this connection. Add one in Settings.');
     }

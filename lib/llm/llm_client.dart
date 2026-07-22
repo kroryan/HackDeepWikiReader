@@ -20,7 +20,25 @@ abstract class LlmClient {
   /// role (Ollama, OpenAI-compatible) get it as a leading message, Anthropic
   /// gets it via its separate `system` field (its Messages API forbids a
   /// `system` role inside `messages`).
-  Stream<String> streamChat({required String? systemPrompt, required List<ChatMessage> messages});
+  ///
+  /// [onThinking], if given, is called with each reasoning/"thinking" delta
+  /// a provider sends SEPARATELY from answer content -- Ollama's
+  /// reasoning-capable models (e.g. gpt-oss) stream many `"thinking": "..."`
+  /// chunks with an empty `content` field before any real answer text
+  /// starts, sometimes for a long time on a broad question. Those chunks
+  /// carry no answer text at all, so they were previously just dropped
+  /// silently, and a real, working, merely-still-thinking response was
+  /// indistinguishable on screen from a dead one (a bare spinner either
+  /// way). This is a callback, not part of the returned `Stream<String>`,
+  /// because thinking text is never part of the answer -- HackDeepWiki's
+  /// own backend routes it to a separate "Process" panel for the same
+  /// reason (see api/agent_loop.py's thinking_sink). Providers with no
+  /// concept of a separate reasoning channel simply never call it.
+  Stream<String> streamChat({
+    required String? systemPrompt,
+    required List<ChatMessage> messages,
+    void Function(String delta)? onThinking,
+  });
 
   /// Lists model ids this connection's base URL/credentials can serve right
   /// now -- backs the "Refresh models" button on the add/edit provider

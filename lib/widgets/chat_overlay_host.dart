@@ -356,6 +356,8 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
                     children: [
                       for (final m in chat.activeSession.messages)
                         _MessageBubble(message: m),
+                      if (chat.isLoading && chat.thinkingBuffer.isNotEmpty)
+                        _ThinkingPanel(text: chat.thinkingBuffer),
                       if (chat.isLoading && chat.toolStatus != null)
                         _ToolStatusBubble(text: chat.toolStatus!),
                       if (chat.isLoading && chat.toolStatus == null)
@@ -548,6 +550,63 @@ class _NoProviderNotice extends StatelessWidget {
               label: const Text('Open Settings'),
               onPressed: () => rootNavigatorKey.currentState?.push(
                 MaterialPageRoute(builder: (_) => const SettingsScreen()),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Live reasoning/"thinking" text a provider streams separately from the
+/// answer (see LlmClient.streamChat's onThinking doc and
+/// ChatProvider.thinkingBuffer) -- collapsed by default like every other
+/// AI chat UI's reasoning panel, expandable if the user wants to follow
+/// along. Existing purely so a model that's genuinely still working (just
+/// slowly, mid chain-of-thought, which can run long on a broad question)
+/// doesn't look indistinguishable from a dead one -- previously this text
+/// was dropped entirely and the user saw nothing but a bare spinner.
+class _ThinkingPanel extends StatelessWidget {
+  final String text;
+  const _ThinkingPanel({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).appColors;
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      decoration: BoxDecoration(
+        color: colors.inputBg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: colors.borderColor),
+      ),
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: false,
+          dense: true,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 10),
+          childrenPadding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+          leading: const SizedBox(
+            height: 14,
+            width: 14,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          title: Text(
+            'Thinking…',
+            style: TextStyle(
+              fontSize: 12,
+              fontStyle: FontStyle.italic,
+              color: colors.muted,
+            ),
+          ),
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                text,
+                style: TextStyle(fontSize: 12, color: colors.muted),
               ),
             ),
           ],

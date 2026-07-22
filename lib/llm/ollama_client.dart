@@ -22,7 +22,11 @@ class OllamaLlmClient implements LlmClient {
   OllamaLlmClient({required this.baseUrl, required this.model});
 
   @override
-  Stream<String> streamChat({required String? systemPrompt, required List<ChatMessage> messages}) async* {
+  Stream<String> streamChat({
+    required String? systemPrompt,
+    required List<ChatMessage> messages,
+    void Function(String delta)? onThinking,
+  }) async* {
     final uri = Uri.parse('$baseUrl/api/chat');
     final request = http.Request('POST', uri)
       ..headers['Content-Type'] = 'application/json'
@@ -63,7 +67,10 @@ class OllamaLlmClient implements LlmClient {
       if (json['error'] != null) {
         throw LlmClientException('Ollama error: ${json['error']}');
       }
-      final content = (json['message'] as Map?)?['content'] as String?;
+      final message = json['message'] as Map?;
+      final thinking = message?['thinking'] as String?;
+      if (thinking != null && thinking.isNotEmpty) onThinking?.call(thinking);
+      final content = message?['content'] as String?;
       if (content != null && content.isNotEmpty) yield content;
       if (json['done'] == true) break;
     }

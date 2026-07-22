@@ -67,6 +67,14 @@ class ChatProvider extends ChangeNotifier {
   String? _error;
   String? _connectionId;
   String? _toolStatus;
+  // Reasoning/"thinking" text a provider streams separately from the answer
+  // (see LlmClient.streamChat's onThinking doc) -- shown live in a
+  // collapsed-by-default panel so a model that's genuinely still working
+  // (just slowly, mid chain-of-thought) doesn't look indistinguishable from
+  // a dead one. Reset at the start of every round; not persisted into
+  // ChatMessage history once the round completes, same as this app's
+  // existing _toolStatus.
+  String _thinkingBuffer = '';
 
   bool includeSecurityContext = false;
 
@@ -93,6 +101,7 @@ class ChatProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String get streamingAnswer => _streamingAnswer;
   String? get error => _error;
+  String get thinkingBuffer => _thinkingBuffer;
 
   /// Non-null while a SEARCH_WIKI tool round is running -- the UI shows this
   /// instead of the (empty, or in-progress-but-not-yet-shown) answer bubble.
@@ -200,6 +209,7 @@ class ChatProvider extends ChangeNotifier {
     _isLoading = true;
     _streamingAnswer = '';
     _toolStatus = null;
+    _thinkingBuffer = '';
     notifyListeners();
 
     final session = activeSession;
@@ -292,6 +302,7 @@ class ChatProvider extends ChangeNotifier {
     _isLoading = false;
     _streamingAnswer = '';
     _toolStatus = null;
+    _thinkingBuffer = '';
     _streamSub = null;
     notifyListeners();
   }
@@ -313,9 +324,17 @@ class ChatProvider extends ChangeNotifier {
     final buffer = StringBuffer();
     var sniffResolved = !allowToolSniffing;
     var hadError = false;
+    _thinkingBuffer = '';
 
     _streamSub = client
-        .streamChat(systemPrompt: systemPrompt, messages: messages)
+        .streamChat(
+          systemPrompt: systemPrompt,
+          messages: messages,
+          onThinking: (delta) {
+            _thinkingBuffer += delta;
+            notifyListeners();
+          },
+        )
         .listen(
           (delta) {
             buffer.write(delta);
@@ -411,6 +430,7 @@ class ChatProvider extends ChangeNotifier {
     _isLoading = false;
     _toolStatus = null;
     _streamingAnswer = '';
+    _thinkingBuffer = '';
     notifyListeners();
   }
 
