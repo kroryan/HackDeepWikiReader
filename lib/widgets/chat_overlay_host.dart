@@ -451,6 +451,19 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
   void _showHistorySheet(BuildContext context, ChatProvider chat) {
     showModalBottomSheet(
       context: context,
+      // The chat panel lives inside its OWN small private Navigator (see
+      // this file's top doc comment) so it stays alive across app
+      // navigation -- but that also means showModalBottomSheet's default
+      // Navigator.of(context) lookup finds THAT nested Navigator, not the
+      // app's real root one. Its Overlay is boxed into the floating panel's
+      // own small, rounded, fixed-size area (420x640 unless maximized), so
+      // the sheet was rendering (and clipping) inside that tiny box instead
+      // of the actual window -- unreadable, and its delete buttons
+      // unreachable, for any session list past the first couple of items.
+      // useRootNavigator escapes to the app's real root Navigator instead,
+      // which owns the whole window.
+      useRootNavigator: true,
+      isScrollControlled: true,
       builder: (sheetContext) {
         return SafeArea(
           child: ListView(

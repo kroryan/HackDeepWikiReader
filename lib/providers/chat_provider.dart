@@ -12,6 +12,7 @@ import '../models/vuln_models.dart';
 import '../models/web_vuln_models.dart';
 import '../providers/wiki_source.dart';
 import '../storage/local_storage.dart';
+import '../utils/app_logger.dart';
 import 'settings_provider.dart';
 
 /// One round of the agentic tool-calling loop (see [ChatProvider._streamOneRound]).
@@ -242,8 +243,78 @@ class ChatProvider extends ChangeNotifier {
     }
 
     final client = buildLlmClient(connection);
-    var workingMessages = List<ChatMessage>.from(baseHistory);
+    AppLogger.instance.info(
+      'sendMessage: connection=${connection.kind} model=${connection.model} '
+      'question="${question.length > 80 ? question.substring(0, 80) : question}"',
+    );
+
+    // Two attempts total: an empty completion (a reasoning model that ends
+    // its turn having produced only "thinking" tokens -- a real, observed,
+    // non-deterministic quirk, see _runRoundLoop's doc) or a transient
+    // provider-side failure (e.g. a bare "Internal Server Error" from an
+    // Ollama cloud-proxied model, confirmed live: the exact same request
+    // succeeded seconds later against the same endpoint) both have a good
+    // chance of succeeding on a plain retry. Don't retry a permanent
+    // failure (bad API key, unreachable host, etc.) endlessly -- one retry,
+    // then surface whatever happened.
     String? finalAnswer;
+    String? lastError;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      _error = null;
+      final outcome = await _runRoundLoop(client, baseHistory);
+      finalAnswer = outcome;
+      lastError = _error;
+      if (finalAnswer != null && finalAnswer.trim().isNotEmpty) break;
+      if (attempt == 0) {
+        AppLogger.instance.warn(
+          'sendMessage: attempt $attempt produced no answer (error=$lastError) -- retrying once',
+        );
+      }
+    }
+    _error = lastError;
+
+    // Mirrors the web backend's own safety net (api/agent_loop.py's
+    // sent_anything tracking): even after a retry, a reasoning-heavy model
+    // can legitimately end up having produced zero actual answer content
+    // twice in a row -- no error, nothing malformed. Without this fallback
+    // that showed as the loading spinner and the "Thinking..." panel just
+    // vanishing with nothing to show for it and no indication anything
+    // went wrong.
+    if (finalAnswer == null || finalAnswer.trim().isEmpty) {
+      AppLogger.instance.warn(
+        'sendMessage: both attempts produced no answer text (error=$_error) -- using fallback message',
+      );
+      finalAnswer = _error != null
+          ? null
+          : "I wasn't able to generate a response for that. Please try rephrasing your question, or try again.";
+    }
+
+    if (finalAnswer != null && finalAnswer.isNotEmpty) {
+      final finalHistory = [
+        ...baseHistory,
+        ChatMessage(role: 'assistant', content: finalAnswer),
+      ];
+      _replaceActiveSessionMessages(finalHistory);
+    }
+    _isLoading = false;
+    _streamingAnswer = '';
+    _toolStatus = null;
+    _thinkingBuffer = '';
+    _streamSub = null;
+    notifyListeners();
+  }
+
+  /// Drives the agentic tool-calling round loop for one attempt (see
+  /// [sendMessage], which may call this twice -- a fresh attempt always
+  /// starts its own `workingMessages` from [baseHistory], never continuing
+  /// a previous attempt's tool-call history). Returns the final answer
+  /// text, or null on error (check [error] for why) or an empty completion
+  /// (no error at all -- see the call site's comment on why that happens).
+  Future<String?> _runRoundLoop(
+    LlmClient client,
+    List<ChatMessage> baseHistory,
+  ) async {
+    var workingMessages = List<ChatMessage>.from(baseHistory);
 
     for (var round = 0; round < _maxToolRounds; round++) {
       final isLastRound = round == _maxToolRounds - 1;
@@ -267,7 +338,10 @@ class ChatProvider extends ChangeNotifier {
         workingMessages,
         allowToolSniffing: !isLastRound,
       );
-      if (result == null) break; // error (sets _error) or produced nothing
+      AppLogger.instance.info(
+        'sendMessage: round=$round result=${result == null ? 'null(error/empty)' : 'text.length=${result.text.length} isToolCall=${result.isToolCall}'} error=$_error',
+      );
+      if (result == null) return null; // error (sets _error) or produced nothing
 
       if (result.isToolCall) {
         final query = result.toolQuery!;
@@ -275,6 +349,9 @@ class ChatProvider extends ChangeNotifier {
         _streamingAnswer = '';
         notifyListeners();
         final hits = await searchWiki(source, query);
+        AppLogger.instance.info(
+          'sendMessage: SEARCH_WIKI "$query" -> ${hits.length} hits',
+        );
         workingMessages = [
           ...workingMessages,
           ChatMessage(role: 'assistant', content: result.text.trim()),
@@ -288,23 +365,9 @@ class ChatProvider extends ChangeNotifier {
         continue;
       }
 
-      finalAnswer = result.text;
-      break;
+      return result.text;
     }
-
-    if (finalAnswer != null && finalAnswer.isNotEmpty) {
-      final finalHistory = [
-        ...baseHistory,
-        ChatMessage(role: 'assistant', content: finalAnswer),
-      ];
-      _replaceActiveSessionMessages(finalHistory);
-    }
-    _isLoading = false;
-    _streamingAnswer = '';
-    _toolStatus = null;
-    _thinkingBuffer = '';
-    _streamSub = null;
-    notifyListeners();
+    return null;
   }
 
   /// Streams one LLM turn. While [allowToolSniffing], the response is
@@ -355,12 +418,22 @@ class ChatProvider extends ChangeNotifier {
               notifyListeners();
             }
           },
-          onError: (Object e) {
+          onError: (Object e, StackTrace st) {
             _error = e is LlmClientException ? e.message : e.toString();
             hadError = true;
+            AppLogger.instance.log(
+              'ERROR',
+              '_streamOneRound: stream error: $_error',
+              error: e,
+              stack: st,
+            );
             if (!completer.isCompleted) completer.complete();
           },
           onDone: () {
+            AppLogger.instance.info(
+              '_streamOneRound: onDone, buffered=${buffer.length} chars, '
+              'thinking=${_thinkingBuffer.length} chars, sniffResolved=$sniffResolved',
+            );
             if (!completer.isCompleted) completer.complete();
           },
           cancelOnError: true,
