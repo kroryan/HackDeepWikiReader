@@ -21,7 +21,7 @@ enum AppThemeMode { system, light, dark }
 
 class AppSettings {
   final String fontFamily;
-  final double fontScale; // 0.85 - 1.4, applied via TextTheme.apply(fontSizeFactor:)
+  final double fontScale; // 0.85 - 1.4, applied via app_theme.dart's _scaleFontSizes (Flutter UI) and, on Android, ZimWebViewPage's setTextZoom (.zim WebView content)
   final AppThemeMode themeMode;
   final String? defaultConnectionId;
 

@@ -140,6 +140,36 @@ class SeverityColors {
   }
 }
 
+/// Scales every named style's fontSize by [factor], skipping any style (or
+/// any individual style's fontSize) that's null instead of asserting on it
+/// -- see buildAppTheme's call site for why TextTheme.apply's own
+/// fontSizeFactor can't be used here.
+TextTheme _scaleFontSizes(TextTheme theme, double factor) {
+  if (factor == 1.0) return theme;
+  TextStyle? scale(TextStyle? style) {
+    if (style == null || style.fontSize == null) return style;
+    return style.copyWith(fontSize: style.fontSize! * factor);
+  }
+
+  return theme.copyWith(
+    displayLarge: scale(theme.displayLarge),
+    displayMedium: scale(theme.displayMedium),
+    displaySmall: scale(theme.displaySmall),
+    headlineLarge: scale(theme.headlineLarge),
+    headlineMedium: scale(theme.headlineMedium),
+    headlineSmall: scale(theme.headlineSmall),
+    titleLarge: scale(theme.titleLarge),
+    titleMedium: scale(theme.titleMedium),
+    titleSmall: scale(theme.titleSmall),
+    bodyLarge: scale(theme.bodyLarge),
+    bodyMedium: scale(theme.bodyMedium),
+    bodySmall: scale(theme.bodySmall),
+    labelLarge: scale(theme.labelLarge),
+    labelMedium: scale(theme.labelMedium),
+    labelSmall: scale(theme.labelSmall),
+  );
+}
+
 ThemeData buildAppTheme(
   AppColors c,
   Brightness brightness, {
@@ -147,8 +177,16 @@ ThemeData buildAppTheme(
   double fontScale = 1.0,
 }) {
   final base = brightness == Brightness.dark ? ThemeData.dark().textTheme : ThemeData.light().textTheme;
-  final textTheme = GoogleFonts.getTextTheme(fontFamily, base)
-      .apply(bodyColor: c.foreground, displayColor: c.foreground, fontSizeFactor: fontScale);
+  // TextTheme.apply(fontSizeFactor: ...) asserts every single style in the
+  // theme has a non-null fontSize the instant the factor isn't exactly 1.0
+  // -- confirmed live (a real crash on a real Android device) that
+  // GoogleFonts.getTextTheme's returned styles don't all satisfy that, so
+  // picking any non-default font size crashed the whole app on the very
+  // next frame. _scaleFontSizes below scales each style's OWN fontSize
+  // individually and only when it's actually present, sidestepping that
+  // assertion instead of relying on every style having one.
+  final textTheme = _scaleFontSizes(GoogleFonts.getTextTheme(fontFamily, base), fontScale)
+      .apply(bodyColor: c.foreground, displayColor: c.foreground);
 
   return ThemeData(
     brightness: brightness,

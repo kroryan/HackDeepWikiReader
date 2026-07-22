@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:webview_flutter/webview_flutter.dart' as wf;
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_windows/webview_windows.dart' as ww;
 
+import '../providers/settings_provider.dart';
 import '../providers/wiki_source.dart';
 import '../utils/app_logger.dart';
 import '../zim/zim_local_server.dart';
@@ -90,6 +94,28 @@ class _ZimWebViewPageState extends State<ZimWebViewPage> {
     }
   }
 
+  double? _lastAppliedFontScale;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Re-applies live if the user changes the font-size setting while this
+    // .zim page is already open, not just on first load.
+    final controller = _webController;
+    if (controller == null) return;
+    final fontScale = context.watch<SettingsProvider>().settings.fontScale;
+    if (fontScale == _lastAppliedFontScale) return;
+    unawaited(_applyTextZoom(controller));
+  }
+
+  Future<void> _applyTextZoom(wf.WebViewController controller) async {
+    if (!mounted || controller.platform is! AndroidWebViewController) return;
+    final fontScale = context.read<SettingsProvider>().settings.fontScale;
+    _lastAppliedFontScale = fontScale;
+    await (controller.platform as AndroidWebViewController)
+        .setTextZoom((fontScale * 100).round());
+  }
+
   Future<void> _init() async {
     try {
       final isAndroid = defaultTargetPlatform == TargetPlatform.android;
@@ -144,6 +170,14 @@ class _ZimWebViewPageState extends State<ZimWebViewPage> {
           // reproduces what landscape did automatically, without knowing
           // anything about this or any other specific archive's markup.
           await (controller.platform as AndroidWebViewController).setUseWideViewPort(true);
+          // The app's font-size setting used to only reach Flutter-drawn
+          // text (app_theme.dart) -- .zim page content renders through a
+          // real WebView, entirely outside that theme, so it stayed fixed
+          // regardless of the setting. setTextZoom scales exactly the way a
+          // real mobile browser's own text-size setting does: it resizes
+          // rendered text without breaking the page's own layout/CSS, unlike
+          // naively multiplying font-size in injected CSS would.
+          await _applyTextZoom(controller);
         }
         setState(() => _webController = controller);
         await _loadPath(widget.path);
