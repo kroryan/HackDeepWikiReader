@@ -54,7 +54,11 @@ class _VulnGraph2DViewState extends State<VulnGraph2DView> {
     final current = _transform.value.getMaxScaleOnAxis();
     if (current <= 0) return;
     final factor = next / current;
-    _transform.value = _transform.value.clone()..scale(factor);
+    // Matrix4.scale(double) is deprecated in favor of scaleByDouble, which
+    // doesn't exist in the vector_math version this app's Flutter SDK
+    // constraint resolves to locally -- diagonal3Values+multiply is the
+    // same uniform-scale-matrix post-multiply, stable across both.
+    _transform.value = _transform.value.clone()..multiply(Matrix4.diagonal3Values(factor, factor, factor));
   }
 
   @override

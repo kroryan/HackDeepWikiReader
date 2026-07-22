@@ -34,6 +34,22 @@ set(CMAKE_CXX_FLAGS_PROFILE "${CMAKE_CXX_FLAGS_RELEASE}")
 # Use Unicode for all projects.
 add_definitions(-DUNICODE -D_UNICODE)
 
+# webview_windows (pub.dev package, not vendored here -- can't patch its
+# source directly) still uses MSVC's pre-standard <experimental/coroutine>
+# header. Newer MSVC/STL releases turned using it into a hard compile error
+# (C2338) instead of a warning -- confirmed live via a real CI failure log:
+#   error C2338: static assertion failed: 'error STL1011: The /await
+#   compiler option, <experimental/coroutine>, ... are deprecated by
+#   Microsoft and will be REMOVED SOON. ... You can define
+#   _SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS to suppress this
+#   error for now.'
+# That's the STL's own documented, Microsoft-provided escape hatch for
+# exactly this transition period -- add_definitions here (before
+# add_subdirectory(flutter) / generated_plugins.cmake below, which is what
+# actually builds every plugin including this one) makes it apply to every
+# target built as part of this project, not just this file's own directory.
+add_definitions(-D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS)
+
 # Compilation settings that should be applied to most targets.
 #
 # Be cautious about adding new options here, as plugins use this function by

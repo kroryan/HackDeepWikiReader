@@ -86,7 +86,7 @@ class _LlmConnectionFormScreenState extends State<LlmConnectionFormScreen> {
           child: ListView(
             children: [
               DropdownButtonFormField<LlmPreset>(
-                value: _preset,
+                initialValue: _preset,
                 decoration: const InputDecoration(labelText: 'Type'),
                 items: [
                   for (final preset in LlmPreset.values)
