@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:webview_all_linux/webview_all_linux.dart';
 
@@ -19,6 +20,15 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (!kIsWeb && defaultTargetPlatform == TargetPlatform.linux) {
     LinuxWebViewPlatform.registerWith();
+  }
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    // immersiveSticky: hides the status bar (clock/battery) and nav bar
+    // (back/home/recent) at all times, reappearing temporarily with the
+    // standard Android edge-swipe gesture and auto-hiding again -- the
+    // normal system-provided way to leave/re-enter fullscreen, so nothing
+    // app-specific for the user to learn. Desktop platforms have no
+    // equivalent chrome to hide, so this stays Android-only.
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
   await AppDirectories.init();
   // Logger first -- before anything that can throw, so a startup crash in
