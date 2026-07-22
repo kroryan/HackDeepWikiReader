@@ -75,6 +75,15 @@ class ChatProvider extends ChangeNotifier {
   late final Future<void> _securityLoadFuture;
 
   StreamSubscription<String>? _streamSub;
+  // Tracks the Completer _streamOneRound is currently awaiting, so cancel()
+  // can resolve it directly. Cancelling the subscription alone does NOT do
+  // this: a cancelled StreamSubscription never fires its onDone/onError
+  // handlers (that's what "cancel" means), so without this, the completer
+  // -- and the whole sendMessage() call stack suspended on `await
+  // completer.future` -- would just hang forever in the background even
+  // though the UI had already moved on, silently leaking a suspended
+  // Future for the rest of this ChatProvider's lifetime.
+  Completer<void>? _activeCompleter;
 
   List<ChatSession> get sessions => List.unmodifiable(_sessions);
   ChatSession get activeSession => _sessions.firstWhere(
@@ -300,6 +309,7 @@ class ChatProvider extends ChangeNotifier {
     required bool allowToolSniffing,
   }) async {
     final completer = Completer<void>();
+    _activeCompleter = completer;
     final buffer = StringBuffer();
     var sniffResolved = !allowToolSniffing;
     var hadError = false;
@@ -339,6 +349,7 @@ class ChatProvider extends ChangeNotifier {
 
     await completer.future;
     _streamSub = null;
+    _activeCompleter = null;
     if (hadError) return null;
 
     final fullText = buffer.toString();
@@ -389,8 +400,17 @@ class ChatProvider extends ChangeNotifier {
   void cancel() {
     _streamSub?.cancel();
     _streamSub = null;
+    // A cancelled StreamSubscription never fires onDone/onError, so without
+    // this the sendMessage() call still suspended on `await
+    // completer.future` inside _streamOneRound would never resume -- see
+    // the field doc on _activeCompleter.
+    if (_activeCompleter != null && !_activeCompleter!.isCompleted) {
+      _activeCompleter!.complete();
+    }
+    _activeCompleter = null;
     _isLoading = false;
     _toolStatus = null;
+    _streamingAnswer = '';
     notifyListeners();
   }
 

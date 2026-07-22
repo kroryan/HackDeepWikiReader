@@ -494,14 +494,16 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
               ),
             ),
             IconButton(
+              // While loading this becomes a stop button instead of a
+              // disabled spinner -- a stalled connection (see
+              // llmStreamStallTimeout) can take up to that long to time
+              // itself out on its own, and the user shouldn't be stuck
+              // staring at a spinner with no way out until then.
               icon: chat.isLoading
-                  ? const SizedBox(
-                      height: 18,
-                      width: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
+                  ? const Icon(Icons.stop_circle_outlined)
                   : const Icon(Icons.send),
-              onPressed: chat.isLoading ? null : () => _send(chat),
+              tooltip: chat.isLoading ? 'Stop' : 'Send',
+              onPressed: chat.isLoading ? chat.cancel : () => _send(chat),
             ),
           ],
         ),

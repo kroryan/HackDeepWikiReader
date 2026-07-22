@@ -39,6 +39,37 @@ class LlmClientException implements Exception {
   String toString() => message;
 }
 
+/// How long a provider stream may go completely silent -- no line, no
+/// byte -- before it's treated as dead. This resets on every event (see
+/// [Stream.timeout]), so it never interrupts a genuinely slow-but-active
+/// generation (a cold-loading local Ollama model, a reasoning model
+/// thinking between chunks); it only fires once nothing has arrived for
+/// this long. Without it, every provider client's `await for` loop over
+/// the response stream had no bound at all: a connection that stops
+/// producing bytes without ever closing (seen with a stalled local
+/// endpoint) left ChatProvider.sendMessage's completer waiting forever --
+/// the chat panel just stays on "loading" indefinitely with no error and
+/// nothing the user can do except force-quit the app, since the composer's
+/// send button disables itself while loading and there was previously no
+/// cancel affordance either.
+const llmStreamStallTimeout = Duration(seconds: 100);
+
+/// Wraps a decoded provider stream with [llmStreamStallTimeout]. Shared by
+/// every LlmClient implementation's streamChat -- see the constant above
+/// for why this exists.
+Stream<T> withLlmStallTimeout<T>(Stream<T> stream) {
+  return stream.timeout(
+    llmStreamStallTimeout,
+    onTimeout: (sink) {
+      sink.addError(LlmClientException(
+        'No response from the server for ${llmStreamStallTimeout.inSeconds} seconds -- '
+        'the connection appears to have stalled. Please try again.',
+      ));
+      sink.close();
+    },
+  );
+}
+
 LlmClient buildLlmClient(LlmConnection connection) {
   switch (connection.kind) {
     case LlmProviderKind.ollama:

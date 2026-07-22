@@ -50,7 +50,9 @@ class OpenAiCompatibleLlmClient implements LlmClient {
       throw LlmClientException('API error (${response.statusCode}): $body');
     }
 
-    await for (final line in response.stream.transform(utf8.decoder).transform(const LineSplitter())) {
+    await for (final line in withLlmStallTimeout(
+      response.stream.transform(utf8.decoder).transform(const LineSplitter()),
+    )) {
       if (!line.startsWith('data:')) continue;
       final data = line.substring(5).trim();
       if (data.isEmpty || data == '[DONE]') continue;

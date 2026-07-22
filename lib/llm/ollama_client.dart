@@ -49,7 +49,9 @@ class OllamaLlmClient implements LlmClient {
       throw LlmClientException('Ollama error (${response.statusCode}): $body');
     }
 
-    await for (final line in response.stream.transform(utf8.decoder).transform(const LineSplitter())) {
+    await for (final line in withLlmStallTimeout(
+      response.stream.transform(utf8.decoder).transform(const LineSplitter()),
+    )) {
       final trimmed = line.trim();
       if (trimmed.isEmpty) continue;
       Map<String, dynamic> json;
