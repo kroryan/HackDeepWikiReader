@@ -223,9 +223,16 @@ class _AndroidFullscreenPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).appColors;
     return Positioned.fill(
-      child: Material(
-        color: colors.background,
-        child: SafeArea(
+      // A plain Material here (as this used to be) never resizes for the
+      // software keyboard the way a Scaffold does -- confirmed live on a
+      // real Android device: opening the keyboard just covered the
+      // composer/send button, WhatsApp-style scroll-up never happened,
+      // because nothing here was reading MediaQuery.viewInsets.bottom at
+      // all. A real Scaffold (resizeToAvoidBottomInset defaults to true)
+      // gets that behavior for free without hand-rolling the padding.
+      child: Scaffold(
+        backgroundColor: colors.background,
+        body: SafeArea(
           child: Column(
             children: [
               _PanelHeader(
@@ -513,6 +520,16 @@ class _ChatPanelBodyState extends State<_ChatPanelBody> {
                   hintText: 'Ask about this wiki…',
                 ),
                 onSubmitted: (_) => _send(chat),
+                // Flutter defaults a TextField's textInputAction to
+                // TextInputAction.newline whenever maxLines != 1 (true
+                // here, for multi-line questions) -- confirmed live on
+                // Android that this means the keyboard's enter key just
+                // inserts a newline and never fires onSubmitted at all, so
+                // Enter silently never sent anything. TextInputAction.send
+                // keeps the multi-line box (still Shift+Enter-able on
+                // platforms with real keyboards) but makes plain Enter/the
+                // keyboard's dedicated send glyph submit instead.
+                textInputAction: TextInputAction.send,
                 enabled: !chat.isLoading,
                 minLines: 1,
                 maxLines: 4,

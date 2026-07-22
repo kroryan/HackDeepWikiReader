@@ -166,13 +166,31 @@ class HomeScreen extends StatelessWidget {
   }
 
   Future<void> _importZim(BuildContext context) async {
+    // FileType.custom + allowedExtensions doesn't work for .zim on Android
+    // -- confirmed live on a real device: file_picker's Android plugin
+    // resolves each allowed extension to a MIME type via Android's own
+    // MimeTypeMap before it'll even open the picker
+    // (FilePickerPlugin.java's "custom" case), and "zim" has no registered
+    // MIME type on Android, so that lookup comes back empty and the picker
+    // refuses to open at all -- silently from the user's POV (the button
+    // just does nothing), loudly in the log (a PlatformException). Same
+    // fix _importBundle above already uses for the equally-unregistered
+    // .hdwreader extension: FileType.any, then filter by extension here in
+    // Dart instead of relying on Android's MIME registry.
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['zim'],
+      type: FileType.any,
       dialogTitle: 'Select a .zim archive',
     );
     if (result == null || result.files.single.path == null) return;
     final pickedPath = result.files.single.path!;
+    if (!pickedPath.toLowerCase().endsWith('.zim')) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please pick a .zim file.')),
+        );
+      }
+      return;
+    }
     if (!context.mounted) return;
     try {
       // Copied into the app's own storage (not just referenced in place) --

@@ -68,6 +68,12 @@ dependencies:
   # full CSS/table support instead of flutter_html's subset. Points at
   # lib/zim/zim_local_server.dart's loopback HTTP server, never the network.
   webview_flutter: ^4.13.1
+  # Already a transitive dependency of webview_flutter on Android; declared
+  # directly because zim_webview.dart casts to AndroidWebViewController for
+  # setUseWideViewPort -- a generic, content-agnostic WebView setting (not
+  # per-.zim logic) for archives whose own responsive breakpoints assume a
+  # wider screen than an actual phone's, confirmed live to matter.
+  webview_flutter_android: ^4.10.1
   # Linux uses WebKitGTK inside a GtkOverlay prepared by the native runner
   # before Flutter's GL view is realized. This keeps full browser layout
   # without WPE's broken DMA-BUF path or late GL-view reparenting.

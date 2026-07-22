@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart' as wf;
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_windows/webview_windows.dart' as ww;
 
 import '../providers/wiki_source.dart';
@@ -16,12 +17,27 @@ import '../zim/zim_local_server.dart';
 /// browser gets the archive's intended CSS/table/flex/grid layout instead of
 /// trying to approximate a web page with Flutter widgets.
 ///
-/// JavaScript stays disabled on both platforms -- matches the web app's own
-/// sandboxed iframe (`sandbox=""`, no `allow-scripts`) around .zim content:
-/// some archives ship a client app that assumes capabilities an opaque
-/// context doesn't have and breaks without them if half-executed, so never
-/// running any of it is the one behavior that's uniformly correct for every
-/// archive.
+/// JavaScript stays disabled on Linux and Windows -- matches the web app's
+/// own sandboxed iframe (`sandbox=""`, no `allow-scripts`) around .zim
+/// content: some archives ship a client app that assumes capabilities an
+/// opaque context doesn't have and breaks without them if half-executed, so
+/// never running any of it is the one behavior that's uniformly correct for
+/// every archive on those platforms.
+///
+/// Android is the one exception, by explicit user decision: a real .zim
+/// archive (a DevDocs export, confirmed live on a real device) turned out to
+/// need its own JS to correctly collapse its sidebar into a mobile layout --
+/// `._sidebar-hidden ._container{margin-left:0}` only every applies via a
+/// class DevDocs' own script adds, no CSS media query does it. There is no
+/// generic, content-agnostic CSS-only fix for "collapse whatever this
+/// specific archive calls its sidebar" that doesn't special-case one
+/// archive's markup at a time, so this is a real architecture trade-off, not
+/// a guess: with the network fully cut off regardless (see
+/// zim_local_server.dart's CSP -- connect-src/frame-src stay 'none' even
+/// with scripts allowed, so nothing here can exfiltrate anything or reach
+/// the network even if the archive's script tried), the main remaining risk
+/// is a misbehaving archive's own script breaking half-executed within its
+/// own sandboxed WebView, not a bigger blast radius elsewhere.
 ///
 /// One server + one WebView instance lives for as long as this
 /// widget stays mounted (i.e. for the WikiViewerScreen's whole lifetime,
@@ -76,7 +92,8 @@ class _ZimWebViewPageState extends State<ZimWebViewPage> {
 
   Future<void> _init() async {
     try {
-      final server = ZimLocalServer(widget.source.archive);
+      final isAndroid = defaultTargetPlatform == TargetPlatform.android;
+      final server = ZimLocalServer(widget.source.archive, allowScripts: isAndroid);
       await server.start();
       if (!mounted) {
         await server.stop();
@@ -87,7 +104,7 @@ class _ZimWebViewPageState extends State<ZimWebViewPage> {
       if (defaultTargetPlatform == TargetPlatform.android ||
           defaultTargetPlatform == TargetPlatform.linux) {
         final controller = wf.WebViewController()
-          ..setJavaScriptMode(wf.JavaScriptMode.disabled)
+          ..setJavaScriptMode(isAndroid ? wf.JavaScriptMode.unrestricted : wf.JavaScriptMode.disabled)
           ..setNavigationDelegate(
             wf.NavigationDelegate(
               onNavigationRequest: _onNavigationRequest,
@@ -112,6 +129,22 @@ class _ZimWebViewPageState extends State<ZimWebViewPage> {
               },
             ),
           );
+        if (isAndroid && controller.platform is AndroidWebViewController) {
+          // Generic, content-agnostic mitigation for archives whose own
+          // responsive breakpoints assume a wider screen than an actual
+          // phone -- confirmed live (a real DevDocs .zim, rotating the
+          // device to landscape) that this exact page renders correctly
+          // proportioned whenever the effective width is wide enough, and
+          // that the archive's own JS never adds the narrow-viewport class
+          // it would need to collapse otherwise (see zim_local_server.dart's
+          // allowScripts doc). Rendering at a wider virtual viewport and
+          // scaling the whole result down to fit the real screen (standard
+          // Android WebView behavior for non-mobile-optimized sites, same
+          // idea as loadWithOverviewMode, which is already on by default)
+          // reproduces what landscape did automatically, without knowing
+          // anything about this or any other specific archive's markup.
+          await (controller.platform as AndroidWebViewController).setUseWideViewPort(true);
+        }
         setState(() => _webController = controller);
         await _loadPath(widget.path);
       } else if (defaultTargetPlatform == TargetPlatform.windows) {
