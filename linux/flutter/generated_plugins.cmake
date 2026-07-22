@@ -3,7 +3,9 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  fullscreen_window
   url_launcher_linux
+  webview_win_floating
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST

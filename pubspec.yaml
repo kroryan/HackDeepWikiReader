@@ -68,6 +68,12 @@ dependencies:
   # full CSS/table support instead of flutter_html's subset. Points at
   # lib/zim/zim_local_server.dart's loopback HTTP server, never the network.
   webview_flutter: ^4.13.1
+  # Linux implementation of webview_flutter, backed by WebKitGTK. ZIM
+  # documents are real web documents (HTML + CSS + images/fonts), so the
+  # flutter_html reader-mode fallback cannot reproduce their intended
+  # layout. This plugin lets Linux use the same local-HTTP/WebView path as
+  # Android while keeping JavaScript disabled.
+  webview_win_floating: ^3.0.3
   # Same idea for Windows (WebView2/Edge) -- a different package because
   # webview_flutter itself has no Windows implementation.
   webview_windows: ^0.4.0

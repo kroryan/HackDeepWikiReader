@@ -12,6 +12,17 @@ add_executable(${BINARY_NAME}
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
 )
 
+# The public bundle executable must set WebKitGTK's software-compositing mode
+# before the real Flutter/WebKit process loads any shared libraries. See
+# launcher.c for why doing this from the runner's main() is already too late.
+set_target_properties(${BINARY_NAME} PROPERTIES
+  OUTPUT_NAME "${BINARY_NAME}.real"
+)
+add_executable(${BINARY_NAME}_launcher "launcher.c")
+set_target_properties(${BINARY_NAME}_launcher PROPERTIES
+  OUTPUT_NAME "${BINARY_NAME}"
+)
+
 # Apply the standard set of build settings. This can be removed for applications
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})

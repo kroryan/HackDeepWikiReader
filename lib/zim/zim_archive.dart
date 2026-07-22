@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -61,19 +62,41 @@ class _MemoryByteSource implements _ByteSource {
 
 class _FileByteSource implements _ByteSource {
   final RandomAccessFile _file;
+  Future<void> _pending = Future<void>.value();
+  bool _closed = false;
   _FileByteSource(this._file);
 
   @override
-  Future<Uint8List> readAt(int offset, int len) async {
-    await _file.setPosition(offset);
-    return _file.read(len);
+  Future<Uint8List> readAt(int offset, int len) {
+    if (_closed) return Future.error(StateError('ZIM archive is closed'));
+
+    // RandomAccessFile has one shared cursor and rejects overlapping async
+    // operations. A real page commonly requests several images/fonts at the
+    // same time, so serialize seek+read as one operation. Without this queue,
+    // large archives (which use the disk-backed source) intermittently return
+    // corrupt assets or "an async operation is currently pending".
+    final result = Completer<Uint8List>();
+    _pending = _pending.then((_) async {
+      try {
+        await _file.setPosition(offset);
+        result.complete(await _file.read(len));
+      } catch (error, stack) {
+        result.completeError(error, stack);
+      }
+    });
+    return result.future;
   }
 
   @override
   Future<int> length() => _file.length();
 
   @override
-  Future<void> close() => _file.close();
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    await _pending;
+    await _file.close();
+  }
 }
 
 /// Reads a .zim archive directly off disk -- fully offline, no server
@@ -116,7 +139,11 @@ class ZimArchive {
     }
     final header = await _readHeader(source);
     final mimetypes = await _readMimetypes(source, header.mimeListPos);
-    final urlPtrs = await _readUrlPointerList(source, header.urlPtrPos, header.entryCount);
+    final urlPtrs = await _readUrlPointerList(
+      source,
+      header.urlPtrPos,
+      header.entryCount,
+    );
     return ZimArchive._(source, header, mimetypes, urlPtrs);
   }
 
@@ -126,7 +153,13 @@ class ZimArchive {
 
   static Future<ZimHeader> _readHeader(_ByteSource f) async {
     final bytes = await f.readAt(0, 80);
+    if (bytes.length < 80) {
+      throw const FormatException('ZIM header is truncated');
+    }
     final bd = ByteData.sublistView(bytes);
+    if (bd.getUint32(0, Endian.little) != 0x044d495a) {
+      throw const FormatException('Not a ZIM archive (invalid magic number)');
+    }
     return ZimHeader(
       majorVersion: bd.getUint16(4, Endian.little),
       minorVersion: bd.getUint16(6, Endian.little),
@@ -141,7 +174,10 @@ class ZimArchive {
     );
   }
 
-  static Future<List<String>> _readMimetypes(_ByteSource f, int mimeListPos) async {
+  static Future<List<String>> _readMimetypes(
+    _ByteSource f,
+    int mimeListPos,
+  ) async {
     // Null-terminated UTF-8 strings, terminated by one empty string. Read a
     // generous chunk up front (mimetype lists are always tiny -- a couple
     // dozen bytes per real-world entry type) instead of byte-by-byte reads.
@@ -158,7 +194,11 @@ class ZimArchive {
     return mimes;
   }
 
-  static Future<List<int>> _readUrlPointerList(_ByteSource f, int urlPtrPos, int count) async {
+  static Future<List<int>> _readUrlPointerList(
+    _ByteSource f,
+    int urlPtrPos,
+    int count,
+  ) async {
     final bytes = await f.readAt(urlPtrPos, count * 8);
     final bd = ByteData.sublistView(bytes);
     return List<int>.generate(count, (i) => bd.getUint64(i * 8, Endian.little));
@@ -175,7 +215,9 @@ class ZimArchive {
       final parsed = _tryParseDirent(entryIndex, chunk);
       if (parsed != null) return parsed;
       if (window > 1 << 20) {
-        throw const FormatException('ZIM directory entry has no terminating null byte (corrupt archive?)');
+        throw const FormatException(
+          'ZIM directory entry has no terminating null byte (corrupt archive?)',
+        );
       }
       window *= 4;
     }
@@ -199,7 +241,10 @@ class ZimArchive {
     pos = urlEnd + 1;
     final titleEnd = chunk.indexOf(0, pos);
     if (titleEnd == -1) return null;
-    final title = utf8.decode(chunk.sublist(pos, titleEnd), allowMalformed: true);
+    final title = utf8.decode(
+      chunk.sublist(pos, titleEnd),
+      allowMalformed: true,
+    );
 
     return ZimDirentInfo(
       index: entryIndex,
@@ -213,7 +258,14 @@ class ZimArchive {
     );
   }
 
-  String mimetypeFor(ZimDirentInfo d) => d.isRedirect ? '' : _mimetypes[d.mimetypeIndex];
+  String mimetypeFor(ZimDirentInfo d) {
+    if (d.isRedirect ||
+        d.mimetypeIndex < 0 ||
+        d.mimetypeIndex >= _mimetypes.length) {
+      return '';
+    }
+    return _mimetypes[d.mimetypeIndex];
+  }
 
   Map<String, ZimDirentInfo>? _byPath;
   List<ZimDirentInfo>? _allDirents;
@@ -266,9 +318,11 @@ class ZimArchive {
   Future<String?> mainPagePath() async {
     if (_mainPageResolved) return _mainPagePath;
     _mainPageResolved = true;
-    if (!header.hasMainPage || header.mainPage >= header.entryCount) return null;
-    final d = await _readDirent(header.mainPage);
-    _mainPagePath = d.isRedirect ? (await _readDirent(d.redirectIndex)).url : d.url;
+    if (!header.hasMainPage || header.mainPage >= header.entryCount) {
+      return null;
+    }
+    final d = await _resolveDirentByIndex(header.mainPage);
+    _mainPagePath = d?.url;
     return _mainPagePath;
   }
 
@@ -276,6 +330,31 @@ class ZimArchive {
     await _ensureIndex();
     return _byPath![path];
   }
+
+  Future<ZimDirentInfo?> _resolveDirentByIndex(int entryIndex) async {
+    final seen = <int>{};
+    var index = entryIndex;
+    while (index >= 0 && index < header.entryCount && seen.add(index)) {
+      final d = await _readDirent(index);
+      if (!d.isRedirect) return d;
+      index = d.redirectIndex;
+    }
+    return null;
+  }
+
+  Future<ZimDirentInfo?> _resolveDirent(String path) async {
+    final first = await _findByPath(path);
+    if (first == null) return null;
+    return first.isRedirect
+        ? _resolveDirentByIndex(first.redirectIndex)
+        : first;
+  }
+
+  /// Returns the real content entry behind [path]. The local HTTP server uses
+  /// this to emit an actual HTTP redirect, preserving the target entry's
+  /// directory as the browser base URL for relative images/stylesheets.
+  Future<String?> resolveEntryPath(String path) async =>
+      (await _resolveDirent(path))?.url;
 
   /// Convenience for reading a small metadata entry (Title, Description,
   /// ...) as text -- these are regular content entries at a plain path, no
@@ -289,20 +368,15 @@ class ZimArchive {
   /// Fetches an entry's content by path, following one redirect hop if
   /// needed, decompressing its cluster (cached) and slicing out its blob.
   Future<ZimEntryContent?> getEntryContent(String path) async {
-    var d = await _findByPath(path);
+    final d = await _resolveDirent(path);
     if (d == null) return null;
-    if (d.isRedirect) {
-      if (d.redirectIndex >= header.entryCount) return null;
-      d = await _readDirent(d.redirectIndex);
-      if (d.isRedirect) return null; // archives never chain redirects
-    }
     final cluster = await _readCluster(d.cluster);
     final blobs = _splitBlobs(cluster.data, cluster.extended);
     if (d.blob + 1 >= blobs.length) return null;
     final bytes = cluster.data.sublist(blobs[d.blob], blobs[d.blob + 1]);
     var mimetype = mimetypeFor(d);
     if (mimetype.isEmpty || mimetype == 'application/octet-stream') {
-      final guessed = _guessMimetypeFromPath(path);
+      final guessed = _guessMimetypeFromPath(d.url);
       if (guessed != null) mimetype = guessed;
     }
     return ZimEntryContent(Uint8List.fromList(bytes), mimetype);
@@ -330,8 +404,34 @@ class ZimArchive {
         return 'image/gif';
       case 'webp':
         return 'image/webp';
+      case 'avif':
+        return 'image/avif';
+      case 'ico':
+        return 'image/x-icon';
+      case 'bmp':
+        return 'image/bmp';
+      case 'woff':
+        return 'font/woff';
+      case 'woff2':
+        return 'font/woff2';
+      case 'ttf':
+        return 'font/ttf';
+      case 'otf':
+        return 'font/otf';
+      case 'xml':
+        return 'application/xml';
       case 'json':
         return 'application/json';
+      case 'pdf':
+        return 'application/pdf';
+      case 'mp3':
+        return 'audio/mpeg';
+      case 'ogg':
+        return 'audio/ogg';
+      case 'mp4':
+        return 'video/mp4';
+      case 'webm':
+        return 'video/webm';
       default:
         return null;
     }
@@ -372,10 +472,14 @@ class ZimArchive {
         decompressed = zstdDecompress(payload);
         break;
       case ZimCompression.lzma2:
-        decompressed = Uint8List.fromList(XZDecoder().decodeBytes(payload, verify: false));
+        decompressed = Uint8List.fromList(
+          XZDecoder().decodeBytes(payload, verify: false),
+        );
         break;
       default:
-        throw FormatException('Unsupported ZIM cluster compression type $compressionByte');
+        throw FormatException(
+          'Unsupported ZIM cluster compression type $compressionByte',
+        );
     }
 
     final result = _DecodedCluster(decompressed, extended);
@@ -388,7 +492,10 @@ class ZimArchive {
   }
 
   Future<int> _clusterStart(int clusterIndex) async {
-    final bytes = await _source.readAt(header.clusterPtrPos + clusterIndex * 8, 8);
+    final bytes = await _source.readAt(
+      header.clusterPtrPos + clusterIndex * 8,
+      8,
+    );
     return ByteData.sublistView(bytes).getUint64(0, Endian.little);
   }
 
@@ -402,11 +509,16 @@ class ZimArchive {
   List<int> _splitBlobs(Uint8List cluster, bool extended) {
     final bd = ByteData.sublistView(cluster);
     final width = extended ? 8 : 4;
-    final firstOffset =
-        extended ? bd.getUint64(0, Endian.little) : bd.getUint32(0, Endian.little);
+    final firstOffset = extended
+        ? bd.getUint64(0, Endian.little)
+        : bd.getUint32(0, Endian.little);
     final numOffsets = firstOffset ~/ width;
     return List<int>.generate(
-        numOffsets, (i) => extended ? bd.getUint64(i * 8, Endian.little) : bd.getUint32(i * 4, Endian.little));
+      numOffsets,
+      (i) => extended
+          ? bd.getUint64(i * 8, Endian.little)
+          : bd.getUint32(i * 4, Endian.little),
+    );
   }
 }
 

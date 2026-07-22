@@ -4,13 +4,14 @@ A read-only companion client for [HackDeepWiki](https://github.com/kroryan/HackD
 
 It never generates wikis and never triggers a security scan — those stay in the main HackDeepWiki app. What it does:
 
-- **Connect to any HackDeepWiki server** by URL (your home server, a work instance, whatever you point it at) and browse every wiki and `.zim` archive cached there.
+- **Connect to any HackDeepWiki server** by URL (your home server, a work instance, whatever you point it at) and browse its generated wikis.
+- **Import `.zim` archives directly** and read/search/chat with them on the device. The archive parser, local loopback content server, page index and chat context all live in this app; no HackDeepWiki server is involved.
 - **Read** the generated wiki pages, with the same section/page hierarchy the web app shows.
 - **View Security Analysis / Website Security** reports — findings, severity breakdown, interactive graph, version history — for repos and websites alike.
 - **Chat, fully independent of any HackDeepWiki server**: this app talks directly to your own configured LLM provider (Ollama, ChatGPT/OpenAI, any custom OpenAI-compatible endpoint, or Anthropic Claude — set these up under Settings) and builds its own context from the wiki content already loaded locally, rather than proxying through a backend. Toggle 🔐 "Security context" to fold the latest saved scan report into that context. Chat runs as a floating panel with a maximize toggle on Linux/Windows (mirroring the web app's own chat widget), and full-screen-but-minimizable on Android — the conversation keeps running in the background either way, even after leaving the wiki, until you send it a new message. This is the core of the app — everything else is in service of it.
 - **Open a `.hdwreader` bundle** — a portable, fully offline export produced by HackDeepWiki's web app (the "Export for HackDeepWikiReader" button, next to the Obsidian export) — for reading a wiki (optionally with its security report) with no server connection at all.
 
-`.zim` archives are always read through a connected HackDeepWiki server (which already has a full `.zim` reader and already supports chatting about `.zim` content) rather than parsed locally — no Flutter/Dart `.zim` library exists, and this keeps chat working uniformly across every content type instead of only for code/website wikis.
+Imported `.zim` archives are parsed locally and served only to an in-app browser on `127.0.0.1`. Android uses its system WebView, Linux uses WebKitGTK and Windows uses WebView2, so archive HTML gets a real browser layout engine for its images, fonts, tables, flexbox and grid. JavaScript and external navigation stay disabled. Chat extracts the current ZIM page as plain text and sends it directly to the LLM provider configured in the reader, exactly like the other local wiki sources.
 
 ## Getting the app
 
@@ -19,30 +20,12 @@ Every push to `main` publishes a rolling pre-release; tagged commits (`vX.Y.Z`) 
 - **Linux** → `HackDeepWikiReader-linux-x64.tar.gz` (extract, run `bundle/hackdeepwikireader`)
 - **Windows** → `HackDeepWikiReader-windows-x64.zip` (extract, run `hackdeepwikireader.exe`)
 - **Android** → `HackDeepWikiReader.apk` (enable "install from unknown sources" if prompted)
-- **Android (Play Store)** → `HackDeepWikiReader.aab`, for uploading to Play Console — not for direct installs
-
-### Android signing
-
-Every CI-built APK/AAB is validly signed, so the APK always installs (and upgrades cleanly release over release) with zero setup: `android/app/ci-installer-key.jks` is a throwaway, intentionally-committed, non-secret key that exists purely so "signed" doesn't depend on secrets nobody configured yet.
-
-To publish to the Play Store you need your own, real upload keystore instead (Play Console requires app updates to keep using the same one forever, so it can't be the throwaway CI key above). Generate one locally:
-
-```bash
-keytool -genkeypair -v -keystore upload-keystore.jks -alias upload -keyalg RSA -keysize 2048 -validity 10000
-```
-
-then add these as repo secrets (Settings → Secrets and variables → Actions) — CI picks them up automatically and switches the release signing config over to them:
-
-- `ANDROID_KEYSTORE_BASE64` — `base64 -w0 upload-keystore.jks`
-- `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_PASSWORD`, `ANDROID_KEY_ALIAS`
-
-(Building locally with your own keystore instead: drop `upload-keystore.jks` into `android/app/` and create `android/key.properties` with `storePassword`/`keyPassword`/`keyAlias`/`storeFile` — both are gitignored.)
 
 ## Building from source
 
 Requires the [Flutter SDK](https://docs.flutter.dev/get-started/install) (stable channel) plus, per target:
 
-- **Linux desktop**: `clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev`
+- **Linux desktop**: `clang cmake ninja-build pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev liblzma-dev libstdc++-12-dev`
 - **Android**: Android SDK (cmdline-tools, platform-tools, `platforms;android-34`, `build-tools;34.0.0`) and a JDK 17 or 21 (not a bleeding-edge JDK — the Android Gradle Plugin doesn't yet support them)
 - **Windows**: Visual Studio with the "Desktop development with C++" workload
 
@@ -56,6 +39,8 @@ flutter build windows --release   # build/windows/x64/runner/Release/
 flutter build apk --release       # build/app/outputs/flutter-apk/app-release.apk
 flutter build appbundle --release # build/app/outputs/bundle/release/app-release.aab
 ```
+
+The packaged Linux app also needs the WebKitGTK 4.1 runtime (`libwebkit2gtk-4.1-0` on Debian/Ubuntu/Kali). It uses a small bundled launcher to select WebKitGTK's software compositor before Flutter starts, avoiding the X11/GLX drawable conflict that otherwise occurs when a ZIM WebView opens.
 
 ## Architecture
 
@@ -72,6 +57,9 @@ lib/
                    provider the user picks. None of this talks to a
                    HackDeepWiki server.
   bundle/          .hdwreader offline bundle parser (unzip + manifest.json).
+  zim/             Native Dart ZIM parser plus a loopback-only HTTP server
+                   used by the platform WebView. Archives, redirects and
+                   compressed clusters are read without a backend.
   models/          Plain Dart data classes mirroring the backend's Pydantic
                    models / the web app's TypeScript types field-for-field,
                    plus this app's own LlmConnection/AppSettings models.
@@ -98,4 +86,4 @@ lib/
                    running chat survives navigating away or minimizing it.
 ```
 
-To add a new read-only feature: add one method to `lib/api/hackdeepwiki_client.dart` that mirrors an existing `api/api.py` endpoint, consume it from a provider, and build a screen. No existing file needs to change for that. To support a third content source (beyond "live server" and "offline bundle"), implement `WikiSource` (`lib/providers/wiki_source.dart`) -- every screen below the library already only depends on that interface. To add a fourth LLM provider, implement `LlmClient` (`lib/llm/llm_client.dart`) in its own file and add one case to `buildLlmClient` -- nothing else needs to change.
+To add a new read-only feature: add one method to `lib/api/hackdeepwiki_client.dart` that mirrors an existing `api/api.py` endpoint, consume it from a provider, and build a screen. No existing file needs to change for that. To support another content source (alongside a live server, an offline bundle and a local ZIM), implement `WikiSource` (`lib/providers/wiki_source.dart`) -- every screen below the library already only depends on that interface. To add another LLM provider, implement `LlmClient` (`lib/llm/llm_client.dart`) in its own file and add one case to `buildLlmClient` -- nothing else needs to change.

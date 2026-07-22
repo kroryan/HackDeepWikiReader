@@ -32,7 +32,10 @@ class _RoundResult {
 class ChatProvider extends ChangeNotifier {
   static const _uuid = Uuid();
   static const _toolPrefix = 'SEARCH_WIKI:';
-  static final _toolCallPattern = RegExp(r'^SEARCH_WIKI:\s*(.+)$', caseSensitive: false);
+  static final _toolCallPattern = RegExp(
+    r'^SEARCH_WIKI:\s*(.+)$',
+    caseSensitive: false,
+  );
   // Mirrors the backend's own MAX_TOOL_ROUNDS (api/agent_loop.py) -- the
   // last round always has tool calling disabled (see buildSystemPrompt's
   // allowToolCalling), forcing a direct answer instead of looping forever.
@@ -42,7 +45,11 @@ class ChatProvider extends ChangeNotifier {
   final SettingsProvider settings;
   String? currentPageId;
 
-  ChatProvider({required this.source, required this.settings, this.currentPageId}) {
+  ChatProvider({
+    required this.source,
+    required this.settings,
+    this.currentPageId,
+  }) {
     _sessions = LocalStorage.loadChatSessions(source.sourceId);
     if (_sessions.isEmpty) {
       _startNewSession();
@@ -70,11 +77,14 @@ class ChatProvider extends ChangeNotifier {
   StreamSubscription<String>? _streamSub;
 
   List<ChatSession> get sessions => List.unmodifiable(_sessions);
-  ChatSession get activeSession =>
-      _sessions.firstWhere((s) => s.id == _activeSessionId, orElse: _startNewSession);
+  ChatSession get activeSession => _sessions.firstWhere(
+    (s) => s.id == _activeSessionId,
+    orElse: _startNewSession,
+  );
   bool get isLoading => _isLoading;
   String get streamingAnswer => _streamingAnswer;
   String? get error => _error;
+
   /// Non-null while a SEARCH_WIKI tool round is running -- the UI shows this
   /// instead of the (empty, or in-progress-but-not-yet-shown) answer bubble.
   String? get toolStatus => _toolStatus;
@@ -84,7 +94,8 @@ class ChatProvider extends ChangeNotifier {
   /// when there's something for it to include (checked once up front, in
   /// the constructor, rather than lazily on first send, precisely so the
   /// toolbar can decide this before the user ever sends a message).
-  bool get securityContextAvailable => _vulnReport != null || _webVulnReport != null;
+  bool get securityContextAvailable =>
+      _vulnReport != null || _webVulnReport != null;
 
   Future<void> _loadSecurityContext() async {
     try {
@@ -147,7 +158,9 @@ class ChatProvider extends ChangeNotifier {
     await LocalStorage.deleteChatSession(source.sourceId, id);
     _sessions = _sessions.where((s) => s.id != id).toList();
     if (_activeSessionId == id) {
-      _activeSessionId = _sessions.isNotEmpty ? _sessions.first.id : _startNewSession().id;
+      _activeSessionId = _sessions.isNotEmpty
+          ? _sessions.first.id
+          : _startNewSession().id;
     }
     notifyListeners();
   }
@@ -168,7 +181,8 @@ class ChatProvider extends ChangeNotifier {
 
     final connection = activeConnection;
     if (connection == null) {
-      _error = 'No LLM provider configured. Open Settings to add one before chatting.';
+      _error =
+          'No LLM provider configured. Open Settings to add one before chatting.';
       notifyListeners();
       return;
     }
@@ -180,10 +194,33 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
 
     final session = activeSession;
-    final baseHistory = [...session.messages, ChatMessage(role: 'user', content: question)];
-    _replaceActiveSessionMessages(baseHistory, title: session.messages.isEmpty ? question.trim() : null);
+    final baseHistory = [
+      ...session.messages,
+      ChatMessage(role: 'user', content: question),
+    ];
+    _replaceActiveSessionMessages(
+      baseHistory,
+      title: session.messages.isEmpty ? question.trim() : null,
+    );
 
     if (includeSecurityContext) await _securityLoadFuture;
+
+    // WebView rendering reads HTML through the loopback server rather than
+    // ZimWikiSource.loadHtml(), so ensure the current article's plain text is
+    // present before constructing the prompt. This keeps local-ZIM chat fully
+    // independent and gives it the same page-scoped context as other wikis.
+    final activeSource = source;
+    final activePageId = currentPageId;
+    if (activeSource is ZimWikiSource && activePageId != null) {
+      try {
+        await activeSource.loadPlainText(activePageId);
+      } catch (error) {
+        _error = 'Could not read the current ZIM page for chat: $error';
+        _isLoading = false;
+        notifyListeners();
+        return;
+      }
+    }
 
     final client = buildLlmClient(connection);
     var workingMessages = List<ChatMessage>.from(baseHistory);
@@ -196,14 +233,21 @@ class ChatProvider extends ChangeNotifier {
         wikiDescription: source.description,
         structure: source.structure,
         isWebsite: source.isWebsite,
-        currentPage: currentPageId != null ? source.structure.pageById(currentPageId!) : null,
+        currentPage: currentPageId != null
+            ? source.structure.pageById(currentPageId!)
+            : null,
         vulnReport: _vulnReport,
         webVulnReport: _webVulnReport,
         includeSecurityContext: includeSecurityContext,
         allowToolCalling: !isLastRound,
       );
 
-      final result = await _streamOneRound(client, systemPrompt, workingMessages, allowToolSniffing: !isLastRound);
+      final result = await _streamOneRound(
+        client,
+        systemPrompt,
+        workingMessages,
+        allowToolSniffing: !isLastRound,
+      );
       if (result == null) break; // error (sets _error) or produced nothing
 
       if (result.isToolCall) {
@@ -215,7 +259,11 @@ class ChatProvider extends ChangeNotifier {
         workingMessages = [
           ...workingMessages,
           ChatMessage(role: 'assistant', content: result.text.trim()),
-          ChatMessage(role: 'user', content: '<tool_result>\n${_formatSearchResults(hits)}\n</tool_result>'),
+          ChatMessage(
+            role: 'user',
+            content:
+                '<tool_result>\n${_formatSearchResults(hits)}\n</tool_result>',
+          ),
         ];
         _toolStatus = null;
         continue;
@@ -226,7 +274,10 @@ class ChatProvider extends ChangeNotifier {
     }
 
     if (finalAnswer != null && finalAnswer.isNotEmpty) {
-      final finalHistory = [...baseHistory, ChatMessage(role: 'assistant', content: finalAnswer)];
+      final finalHistory = [
+        ...baseHistory,
+        ChatMessage(role: 'assistant', content: finalAnswer),
+      ];
       _replaceActiveSessionMessages(finalHistory);
     }
     _isLoading = false;
@@ -253,35 +304,38 @@ class ChatProvider extends ChangeNotifier {
     var sniffResolved = !allowToolSniffing;
     var hadError = false;
 
-    _streamSub = client.streamChat(systemPrompt: systemPrompt, messages: messages).listen(
-      (delta) {
-        buffer.write(delta);
-        if (sniffResolved) {
-          _streamingAnswer += delta;
-          notifyListeners();
-          return;
-        }
-        final text = buffer.toString();
-        if (text.length < _toolPrefix.length) return;
-        if (text.substring(0, _toolPrefix.length).toUpperCase() != _toolPrefix) {
-          sniffResolved = true;
-          _streamingAnswer = text;
-          notifyListeners();
-        } else {
-          _toolStatus = 'Thinking…';
-          notifyListeners();
-        }
-      },
-      onError: (Object e) {
-        _error = e is LlmClientException ? e.message : e.toString();
-        hadError = true;
-        if (!completer.isCompleted) completer.complete();
-      },
-      onDone: () {
-        if (!completer.isCompleted) completer.complete();
-      },
-      cancelOnError: true,
-    );
+    _streamSub = client
+        .streamChat(systemPrompt: systemPrompt, messages: messages)
+        .listen(
+          (delta) {
+            buffer.write(delta);
+            if (sniffResolved) {
+              _streamingAnswer += delta;
+              notifyListeners();
+              return;
+            }
+            final text = buffer.toString();
+            if (text.length < _toolPrefix.length) return;
+            if (text.substring(0, _toolPrefix.length).toUpperCase() !=
+                _toolPrefix) {
+              sniffResolved = true;
+              _streamingAnswer = text;
+              notifyListeners();
+            } else {
+              _toolStatus = 'Thinking…';
+              notifyListeners();
+            }
+          },
+          onError: (Object e) {
+            _error = e is LlmClientException ? e.message : e.toString();
+            hadError = true;
+            if (!completer.isCompleted) completer.complete();
+          },
+          onDone: () {
+            if (!completer.isCompleted) completer.complete();
+          },
+          cancelOnError: true,
+        );
 
     await completer.future;
     _streamSub = null;
@@ -291,7 +345,11 @@ class ChatProvider extends ChangeNotifier {
     final trimmed = fullText.trim();
     final match = _toolCallPattern.firstMatch(trimmed);
     if (allowToolSniffing && match != null && !trimmed.contains('\n')) {
-      return _RoundResult(fullText, isToolCall: true, toolQuery: match.group(1)!.trim());
+      return _RoundResult(
+        fullText,
+        isToolCall: true,
+        toolQuery: match.group(1)!.trim(),
+      );
     }
     if (!sniffResolved) {
       // Short response that never got flushed to the live answer -- show it now.
@@ -312,12 +370,17 @@ class ChatProvider extends ChangeNotifier {
     return buffer.toString();
   }
 
-  void _replaceActiveSessionMessages(List<ChatMessage> messages, {String? title}) {
+  void _replaceActiveSessionMessages(
+    List<ChatMessage> messages, {
+    String? title,
+  }) {
     final session = activeSession;
     final updated = session.copyWith(
       messages: messages,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
-      title: title != null ? (title.length > 48 ? title.substring(0, 48) : title) : null,
+      title: title != null
+          ? (title.length > 48 ? title.substring(0, 48) : title)
+          : null,
     );
     _sessions = _sessions.map((s) => s.id == updated.id ? updated : s).toList();
     LocalStorage.saveChatSession(source.sourceId, updated);

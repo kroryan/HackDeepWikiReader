@@ -6,14 +6,14 @@ import 'package:webview_windows/webview_windows.dart' as ww;
 import '../providers/wiki_source.dart';
 import '../zim/zim_local_server.dart';
 
-/// Renders one .zim entry with a real browser engine -- Android via
-/// webview_flutter, Windows via webview_windows (two different packages;
-/// webview_flutter has no Windows implementation). Both point at a
+/// Renders one .zim entry with a real browser engine -- Android via the
+/// official webview_flutter implementation, Linux via its WebKitGTK-backed
+/// federated implementation, and Windows via webview_windows. All point at a
 /// loopback-only local HTTP server (lib/zim/zim_local_server.dart) that
 /// serves the archive's own entries, so the browser resolves every
 /// relative link/image/stylesheet itself with full CSS/table support --
-/// the fidelity gap flutter_html (used as the Linux fallback, see
-/// zim_html_view.dart, since no WebView plugin covers Linux) can't close.
+/// browser gets the archive's intended CSS/table/flex/grid layout instead of
+/// trying to approximate a web page with Flutter widgets.
 ///
 /// JavaScript stays disabled on both platforms -- matches the web app's own
 /// sandboxed iframe (`sandbox=""`, no `allow-scripts`) around .zim content:
@@ -32,7 +32,12 @@ class ZimWebViewPage extends StatefulWidget {
   final String path;
   final ValueChanged<String> onNavigate;
 
-  const ZimWebViewPage({super.key, required this.source, required this.path, required this.onNavigate});
+  const ZimWebViewPage({
+    super.key,
+    required this.source,
+    required this.path,
+    required this.onNavigate,
+  });
 
   @override
   State<ZimWebViewPage> createState() => _ZimWebViewPageState();
@@ -68,10 +73,13 @@ class _ZimWebViewPageState extends State<ZimWebViewPage> {
       }
       _server = server;
 
-      if (defaultTargetPlatform == TargetPlatform.android) {
+      if (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.linux) {
         final controller = wf.WebViewController()
           ..setJavaScriptMode(wf.JavaScriptMode.disabled)
-          ..setNavigationDelegate(wf.NavigationDelegate(onNavigationRequest: _onNavigationRequest));
+          ..setNavigationDelegate(
+            wf.NavigationDelegate(onNavigationRequest: _onNavigationRequest),
+          );
         setState(() => _androidController = controller);
         await _loadPath(widget.path);
       } else if (defaultTargetPlatform == TargetPlatform.windows) {
@@ -97,7 +105,7 @@ class _ZimWebViewPageState extends State<ZimWebViewPage> {
     final server = _server;
     if (server == null) return;
     _loadedPath = path;
-    final url = Uri.parse('${server.baseUrl}/${Uri.encodeFull(path)}');
+    final url = server.urlForPath(path);
     if (_androidController != null) {
       await _androidController!.loadRequest(url);
     } else if (_windowsController != null) {
@@ -107,7 +115,9 @@ class _ZimWebViewPageState extends State<ZimWebViewPage> {
 
   wf.NavigationDecision _onNavigationRequest(wf.NavigationRequest request) {
     final handled = _handleNavigatedUrl(request.url);
-    return handled ? wf.NavigationDecision.navigate : wf.NavigationDecision.prevent;
+    return handled
+        ? wf.NavigationDecision.navigate
+        : wf.NavigationDecision.prevent;
   }
 
   void _onWindowsUrlChanged(String url) => _handleNavigatedUrl(url);
@@ -121,9 +131,10 @@ class _ZimWebViewPageState extends State<ZimWebViewPage> {
     final server = _server;
     if (server == null) return false;
     final uri = Uri.tryParse(url);
-    if (uri == null || uri.host != '127.0.0.1' || uri.port != server.port) return false;
-    var path = uri.path;
-    if (path.startsWith('/')) path = path.substring(1);
+    if (uri == null || uri.host != '127.0.0.1' || uri.port != server.port) {
+      return false;
+    }
+    final path = uri.pathSegments.join('/');
     if (path.isEmpty || path == _loadedPath) return true;
     _loadedPath = path;
     widget.onNavigate(path);

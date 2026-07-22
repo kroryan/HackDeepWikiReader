@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -11,10 +13,13 @@ import '../widgets/zim_html_view.dart';
 import '../widgets/zim_webview.dart';
 import 'security_screen.dart';
 
-/// Real WebView plugins only cover Android/Windows (see zim_webview.dart's
-/// doc comment) -- Linux keeps the flutter_html-based reader-mode fallback.
+/// ZIM pages need a real browser layout engine on every supported platform.
+/// Linux gets its webview_flutter implementation from webview_win_floating
+/// (WebKitGTK); Android and Windows keep their existing implementations.
 bool get _hasZimWebView =>
-    defaultTargetPlatform == TargetPlatform.android || defaultTargetPlatform == TargetPlatform.windows;
+    defaultTargetPlatform == TargetPlatform.android ||
+    defaultTargetPlatform == TargetPlatform.linux ||
+    defaultTargetPlatform == TargetPlatform.windows;
 
 /// Read-only wiki viewer: section tree sidebar + Markdown page content.
 /// Works identically whether [source] is a live server wiki or a local
@@ -31,12 +36,14 @@ class WikiViewerScreen extends StatefulWidget {
 class _WikiViewerScreenState extends State<WikiViewerScreen> {
   String? _currentPageId;
   String _treeFilter = '';
+  bool _drawerOpen = false;
 
   @override
   void initState() {
     super.initState();
     final pages = widget.source.structure.pages;
     _currentPageId = pages.isNotEmpty ? pages.first.id : null;
+    _primeZimChatContext(_currentPageId);
   }
 
   @override
@@ -48,13 +55,86 @@ class _WikiViewerScreenState extends State<WikiViewerScreen> {
 
   void _navigateTo(String pageId) {
     setState(() => _currentPageId = pageId);
-    context.read<ChatOverlayController>().updateCurrentPage(widget.source.sourceId, pageId);
+    _primeZimChatContext(pageId);
+    context.read<ChatOverlayController>().updateCurrentPage(
+      widget.source.sourceId,
+      pageId,
+    );
+  }
+
+  void _primeZimChatContext(String? pageId) {
+    final source = widget.source;
+    if (pageId != null && source is ZimWikiSource) {
+      // This is only a warm-up; a damaged article must not surface as an
+      // unhandled asynchronous exception while the WebView reports its own
+      // loading error normally.
+      unawaited(source.loadPlainText(pageId).catchError((_) => null));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final structure = widget.source.structure;
-    final page = _currentPageId != null ? structure.pageById(_currentPageId!) : null;
+    final page = _currentPageId != null
+        ? structure.pageById(_currentPageId!)
+        : null;
+    final overlay = context.watch<ChatOverlayController>();
+    final linuxZim =
+        defaultTargetPlatform == TargetPlatform.linux &&
+        widget.source is ZimWikiSource;
+    final currentChatOpen =
+        linuxZim &&
+        overlay.isOpen &&
+        overlay.source?.sourceId == widget.source.sourceId;
+    final currentChatMinimized =
+        linuxZim &&
+        overlay.hasSession &&
+        !overlay.isOpen &&
+        overlay.source?.sourceId == widget.source.sourceId;
+    final canShowWebViewBesideChat = MediaQuery.sizeOf(context).width >= 760;
+    final hideNativeWebView =
+        linuxZim &&
+        (_drawerOpen ||
+            (currentChatOpen &&
+                (overlay.isMaximized || !canShowWebViewBesideChat)));
+    final chatSpace =
+        currentChatOpen && !overlay.isMaximized && canShowWebViewBesideChat
+        ? 468.0
+        // Native Linux views always sit above Flutter's compositor. Keep a
+        // small real strip for the minimized chat bubble as well.
+        : currentChatMinimized
+        ? 88.0
+        : 0.0;
+
+    Widget pageBody = page == null
+        ? const Center(child: Text('No pages in this wiki.'))
+        : widget.source is ZimWikiSource
+        ? (_hasZimWebView
+              ? ZimWebViewPage(
+                  source: widget.source as ZimWikiSource,
+                  path: page.id,
+                  onNavigate: _navigateTo,
+                )
+              : _ZimPageBody(
+                  source: widget.source as ZimWikiSource,
+                  path: page.id,
+                  onNavigate: _navigateTo,
+                ))
+        : SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: WikiMarkdownView(data: page.content),
+          );
+    if (hideNativeWebView) {
+      pageBody = const SizedBox.expand();
+    } else if (chatSpace > 0) {
+      // Linux WebKitGTK is a native surface: Flutter cannot paint the chat
+      // over it. Shrink the actual WebView bounds so the floating panel owns
+      // a real, non-overlapping strip on the right.
+      pageBody = Padding(
+        padding: EdgeInsets.only(right: chatSpace),
+        child: pageBody,
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -65,7 +145,10 @@ class _WikiViewerScreenState extends State<WikiViewerScreen> {
         // wiki). Restore the back button explicitly and move the drawer
         // toggle to `actions` instead.
         leading: Navigator.of(context).canPop()
-            ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.of(context).pop())
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.of(context).pop(),
+              )
             : null,
         title: Text(widget.source.title, overflow: TextOverflow.ellipsis),
         actions: [
@@ -76,21 +159,31 @@ class _WikiViewerScreenState extends State<WikiViewerScreen> {
               onPressed: () => Scaffold.of(context).openDrawer(),
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.security),
-            tooltip: widget.source.isWebsite ? 'Website Security' : 'Security Analysis',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => SecurityScreen(source: widget.source)),
+          if (widget.source is! ZimWikiSource)
+            IconButton(
+              icon: const Icon(Icons.security),
+              tooltip: widget.source.isWebsite
+                  ? 'Website Security'
+                  : 'Security Analysis',
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => SecurityScreen(source: widget.source),
+                ),
+              ),
             ),
-          ),
           IconButton(
-            icon: Icon(context.watch<ChatOverlayController>().isOpen
-                ? Icons.chat_bubble
-                : Icons.chat_bubble_outline),
-            tooltip: context.watch<ChatOverlayController>().isOpen ? 'Hide chat' : 'Chat',
-            onPressed: () => context
-                .read<ChatOverlayController>()
-                .toggle(widget.source, currentPageId: _currentPageId),
+            icon: Icon(
+              context.watch<ChatOverlayController>().isOpen
+                  ? Icons.chat_bubble
+                  : Icons.chat_bubble_outline,
+            ),
+            tooltip: context.watch<ChatOverlayController>().isOpen
+                ? 'Hide chat'
+                : 'Chat',
+            onPressed: () => context.read<ChatOverlayController>().toggle(
+              widget.source,
+              currentPageId: _currentPageId,
+            ),
           ),
         ],
       ),
@@ -100,7 +193,10 @@ class _WikiViewerScreenState extends State<WikiViewerScreen> {
             children: [
               Padding(
                 padding: const EdgeInsets.all(16),
-                child: Text(structure.title, style: Theme.of(context).textTheme.titleMedium),
+                child: Text(
+                  structure.title,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
               ),
               // .zim archives are shown as a flat, searchable index (like
               // the web app's own .zim reader sidebar) instead of a section
@@ -116,7 +212,8 @@ class _WikiViewerScreenState extends State<WikiViewerScreen> {
                       hintText: 'Search this archive…',
                       isDense: true,
                     ),
-                    onChanged: (v) => setState(() => _treeFilter = v.trim().toLowerCase()),
+                    onChanged: (v) =>
+                        setState(() => _treeFilter = v.trim().toLowerCase()),
                   ),
                 ),
               Expanded(
@@ -133,23 +230,21 @@ class _WikiViewerScreenState extends State<WikiViewerScreen> {
           ),
         ),
       ),
-      body: page == null
-          ? const Center(child: Text('No pages in this wiki.'))
-          : widget.source is ZimWikiSource
-              ? (_hasZimWebView
-                  ? ZimWebViewPage(source: widget.source as ZimWikiSource, path: page.id, onNavigate: _navigateTo)
-                  : _ZimPageBody(source: widget.source as ZimWikiSource, path: page.id, onNavigate: _navigateTo))
-              : SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
-                  child: WikiMarkdownView(data: page.content),
-                ),
+      onDrawerChanged: (open) {
+        if (_drawerOpen != open) setState(() => _drawerOpen = open);
+      },
+      body: pageBody,
     );
   }
 
   WikiStructure _filteredStructure(WikiStructure structure) {
     if (_treeFilter.isEmpty || structure.sections.isNotEmpty) return structure;
     final filtered = structure.pages
-        .where((p) => p.title.toLowerCase().contains(_treeFilter) || p.id.toLowerCase().contains(_treeFilter))
+        .where(
+          (p) =>
+              p.title.toLowerCase().contains(_treeFilter) ||
+              p.id.toLowerCase().contains(_treeFilter),
+        )
         .toList();
     return WikiStructure(
       id: structure.id,
@@ -170,7 +265,11 @@ class _ZimPageBody extends StatelessWidget {
   final String path;
   final ValueChanged<String> onNavigate;
 
-  const _ZimPageBody({required this.source, required this.path, required this.onNavigate});
+  const _ZimPageBody({
+    required this.source,
+    required this.path,
+    required this.onNavigate,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -184,12 +283,19 @@ class _ZimPageBody extends StatelessWidget {
         if (snapshot.hasError || snapshot.data == null) {
           return Padding(
             padding: const EdgeInsets.all(24),
-            child: Text('Could not load this page: ${snapshot.error ?? 'not found in archive'}'),
+            child: Text(
+              'Could not load this page: ${snapshot.error ?? 'not found in archive'}',
+            ),
           );
         }
         return SingleChildScrollView(
           padding: const EdgeInsets.all(16),
-          child: ZimHtmlView(source: source, path: path, html: snapshot.data!, onNavigate: onNavigate),
+          child: ZimHtmlView(
+            source: source,
+            path: path,
+            html: snapshot.data!,
+            onNavigate: onNavigate,
+          ),
         );
       },
     );
