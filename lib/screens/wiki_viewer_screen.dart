@@ -62,11 +62,13 @@ class _WikiViewerScreenState extends State<WikiViewerScreen> {
             ),
           ),
           IconButton(
-            icon: const Icon(Icons.chat_bubble_outline),
-            tooltip: 'Chat',
+            icon: Icon(context.watch<ChatOverlayController>().isOpen
+                ? Icons.chat_bubble
+                : Icons.chat_bubble_outline),
+            tooltip: context.watch<ChatOverlayController>().isOpen ? 'Hide chat' : 'Chat',
             onPressed: () => context
                 .read<ChatOverlayController>()
-                .openFor(widget.source, currentPageId: _currentPageId),
+                .toggle(widget.source, currentPageId: _currentPageId),
           ),
         ],
       ),

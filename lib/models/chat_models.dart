@@ -15,6 +15,16 @@ class ChatMessage {
         role: json['role'] as String? ?? 'user',
         content: json['content'] as String? ?? '',
       );
+
+  /// Reads a message that may have come back from Hive as a
+  /// `Map<dynamic, dynamic>` (Hive doesn't preserve nested generic types on
+  /// reload -- a stored `Map<String, dynamic>` is handed back as
+  /// `Map<dynamic, dynamic>`, so a direct `as Map<String, dynamic>` cast in
+  /// [ChatSession.fromJson] throws and the whole chat overlay refuses to
+  /// open on any wiki that has saved history). This widens the input to
+  /// `Map` and re-types it via `Map<String, dynamic>.from` before delegating.
+  factory ChatMessage.fromJsonUntyped(Map<Object?, Object?> json) =>
+      ChatMessage.fromJson(Map<String, dynamic>.from(json));
 }
 
 /// A saved chat conversation for one wiki -- mirrors the shape of Ask.tsx's
@@ -48,7 +58,7 @@ class ChatSession {
         createdAt: json['createdAt'] as int? ?? 0,
         updatedAt: json['updatedAt'] as int? ?? 0,
         messages: (json['messages'] as List?)
-                ?.map((e) => ChatMessage.fromJson(e as Map<String, dynamic>))
+                ?.map((e) => ChatMessage.fromJsonUntyped(e as Map<Object?, Object?>))
                 .toList() ??
             [],
       );

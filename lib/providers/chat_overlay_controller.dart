@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../utils/app_logger.dart';
 import 'chat_provider.dart';
 import 'settings_provider.dart';
 import 'wiki_source.dart';
@@ -35,12 +36,22 @@ class ChatOverlayController extends ChangeNotifier {
   bool get hasSession => _chatProvider != null;
 
   void openFor(WikiSource newSource, {String? currentPageId}) {
+    AppLogger.instance.info('openFor sourceId=${newSource.sourceId} '
+        'title="${newSource.title}" page=$currentPageId '
+        'sameSource=${_source?.sourceId == newSource.sourceId} '
+        'prevOpen=$_open hasProvider=${_chatProvider != null}');
     if (_source?.sourceId != newSource.sourceId) {
       _chatProvider?.removeListener(notifyListeners);
       _chatProvider?.dispose();
-      _chatProvider = ChatProvider(source: newSource, settings: settings, currentPageId: currentPageId)
-        ..addListener(notifyListeners);
-      _source = newSource;
+      try {
+        _chatProvider = ChatProvider(source: newSource, settings: settings, currentPageId: currentPageId)
+          ..addListener(notifyListeners);
+        _source = newSource;
+        AppLogger.instance.info('ChatProvider created ok, sessions=${_chatProvider!.sessions.length}');
+      } catch (e, st) {
+        AppLogger.instance.log('ERROR', 'ChatProvider constructor threw', error: e, stack: st);
+        rethrow;
+      }
     } else {
       _chatProvider?.setCurrentPageId(currentPageId ?? _chatProvider?.currentPageId);
     }
@@ -54,6 +65,19 @@ class ChatOverlayController extends ChangeNotifier {
   void updateCurrentPage(String sourceId, String? pageId) {
     if (_source?.sourceId == sourceId) {
       _chatProvider?.setCurrentPageId(pageId);
+    }
+  }
+
+  /// Opens the chat for [newSource] if it isn't already showing for that
+  /// source, or hides it if it is -- backs the per-wiki "Chat" action button
+  /// so the same button both opens and minimizes the panel (matching the
+  /// minimized bubble's tap-to-expand and the panel's own minimize button,
+  /// which both already toggle visibility without disposing the session).
+  void toggle(WikiSource newSource, {String? currentPageId}) {
+    if (_open && _source?.sourceId == newSource.sourceId) {
+      minimize();
+    } else {
+      openFor(newSource, currentPageId: currentPageId);
     }
   }
 

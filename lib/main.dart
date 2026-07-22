@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -9,11 +10,23 @@ import 'providers/settings_provider.dart';
 import 'screens/home_screen.dart';
 import 'storage/local_storage.dart';
 import 'theme/app_theme.dart';
+import 'utils/app_logger.dart';
 import 'widgets/chat_overlay_host.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await LocalStorage.init();
+  // Logger first -- before anything that can throw, so a startup crash in
+  // LocalStorage.init (Hive lock, bad box) is captured too.
+  await AppLogger.instance.init();
+  AppLogger.instance
+      .info('App starting on ${defaultTargetPlatform.name}, kReleaseMode=$kReleaseMode');
+  try {
+    await LocalStorage.init();
+    AppLogger.instance.info('LocalStorage initialized');
+  } catch (e, st) {
+    AppLogger.instance.log('ERROR', 'LocalStorage.init failed', error: e, stack: st);
+    rethrow;
+  }
   runApp(const HackDeepWikiReaderApp());
 }
 

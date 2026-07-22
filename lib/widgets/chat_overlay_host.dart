@@ -9,6 +9,7 @@ import '../providers/chat_provider.dart';
 import '../providers/settings_provider.dart';
 import '../screens/settings_screen.dart';
 import '../theme/app_theme.dart';
+import '../utils/app_logger.dart';
 import 'wiki_markdown_view.dart';
 
 bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
@@ -27,17 +28,75 @@ bool get _isAndroid => defaultTargetPlatform == TargetPlatform.android;
 /// phone sizes) but stays minimizable -- minimizing shows a small floating
 /// bubble instead, tap to return to full-screen, same session still
 /// running underneath the whole time.
+///
+/// How it's mounted: this widget sits ALONGSIDE the root Navigator in
+/// MaterialApp.builder's Stack (so it paints above the app, and being a
+/// separate Navigator instance means it's untouched by route push/pop
+/// underneath -- the chat stays alive across navigation, the original
+/// design). It's its OWN [Navigator]: the chat content is the Navigator's
+/// single home route, a non-modal [OverlayRoute] (no ModalBarrier, so it
+/// doesn't block taps on the app behind the panel). That gives the content
+/// both a Navigator ancestor (so the toolbar's DropdownButton / the
+/// History bottom sheet can push their popup/modal routes) and an Overlay
+/// ancestor (so the panel's tooltips, the composer TextField, and markdown
+/// selection can use OverlayPortal without "No Overlay widget found").
+/// `Positioned` panels float via the inner Navigator's overlay (a
+/// Stack-like theater); the home route is non-opaque so empty areas pass
+/// hits through to the app underneath.
 class ChatOverlayHost extends StatelessWidget {
   const ChatOverlayHost({super.key});
 
   @override
   Widget build(BuildContext context) {
+    return Navigator(
+      initialRoute: '/',
+      onGenerateRoute: (settings) =>
+          _ChatHomeRoute(builder: (_) => const _ChatOverlayContent()),
+      // The chat is a floating overlay, never a focus-trap that dims the app
+      // behind it; keep its own focus management out of the way.
+      observers: const <NavigatorObserver>[],
+    );
+  }
+}
+
+/// Non-modal home route for the chat's private Navigator -- renders only the
+/// chat content as a single non-opaque [OverlayEntry], with NO barrier (a
+/// [ModalRoute] would install a full-screen [ModalBarrier] that blocks the
+/// app behind the panel). Popup/modal routes the content pushes on top
+/// (the toolbar DropdownButton's menu, the History bottom sheet) DO get
+/// their own transient barriers, which is correct and expected for menus.
+class _ChatHomeRoute extends OverlayRoute<void> {
+  _ChatHomeRoute({required this.builder}) : super(settings: const RouteSettings(name: '/'));
+  final WidgetBuilder builder;
+
+  @override
+  Iterable<OverlayEntry> createOverlayEntries() sync* {
+    yield OverlayEntry(opaque: false, builder: builder);
+  }
+}
+
+/// The actual visible chat UI -- rendered as the home route of the chat's
+/// private Navigator, so it (and everything it builds: dropdowns, tooltips,
+/// the composer TextField, markdown selection) has Navigator + Overlay
+/// ancestors.
+class _ChatOverlayContent extends StatelessWidget {
+  const _ChatOverlayContent();
+
+  @override
+  Widget build(BuildContext context) {
     final overlay = context.watch<ChatOverlayController>();
-    if (!overlay.hasSession) return const SizedBox.shrink();
+    if (!overlay.hasSession) {
+      AppLogger.instance.info('overlay-content build -> no session');
+      return const SizedBox.shrink();
+    }
 
     if (!overlay.isOpen) {
+      AppLogger.instance.info('overlay-content build -> minimized bubble');
       return _MinimizedBubble(overlay: overlay);
     }
+    final which = _isAndroid ? 'android-fullscreen' : 'desktop-panel';
+    AppLogger.instance
+        .info('overlay-content build -> $which maximized=${overlay.isMaximized}');
     return _isAndroid ? _AndroidFullscreenPanel(overlay: overlay) : _DesktopPanel(overlay: overlay);
   }
 }
@@ -465,7 +524,7 @@ class _MessageBubble extends StatelessWidget {
             ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
             : isUser
                 ? Text(text)
-                : WikiMarkdownView(data: text),
+                : WikiMarkdownView(data: text, selectable: false),
       ),
     );
   }

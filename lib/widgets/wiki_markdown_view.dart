@@ -23,14 +23,24 @@ import '../theme/app_theme.dart';
 class WikiMarkdownView extends StatelessWidget {
   final String data;
 
-  const WikiMarkdownView({super.key, required this.data});
+  /// Whether the rendered text is selectable. Defaults true -- but the chat
+  /// overlay (lib/widgets/chat_overlay_host.dart) passes false, because the
+  /// chat panel is a sibling of the Navigator (see main.dart's
+  /// MaterialApp.builder) and so has no Overlay ancestor, while selectable
+  /// text uses an OverlayPortal for its selection handles/toolbar. With no
+  /// Overlay up the tree that throws "No Overlay widget found" on the first
+  /// repaint and blanks the panel. The wiki *page* viewer lives under the
+  /// Navigator (has an Overlay), so it keeps selectable true.
+  final bool selectable;
+
+  const WikiMarkdownView({super.key, required this.data, this.selectable = true});
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return MarkdownBody(
       data: data,
-      selectable: true,
+      selectable: selectable,
       builders: {'pre': _CodeBlockBuilder(isDark: isDark)},
       onTapLink: (text, href, title) {
         // External links only (no local repo file browsing in this app).
