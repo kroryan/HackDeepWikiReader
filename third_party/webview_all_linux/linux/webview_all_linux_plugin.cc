@@ -200,6 +200,37 @@ static void flutter_view_size_allocate_cb(GtkWidget* widget,
       static_cast<WebviewAllLinuxPlugin*>(user_data));
 }
 
+// WebKitWebView reports its own "natural" preferred size as roughly the
+// full space available to it (an accelerated-compositing implementation
+// detail, not something callers can influence) -- and GtkOverlay's default
+// child-positioning math is `CLAMP(natural, minimum, overlay_size)`, which
+// only respects a smaller `gtk_widget_set_size_request` as a MINIMUM floor,
+// never as a ceiling. So a shrink request below the natural size (e.g. to
+// leave room for a Flutter-drawn chat panel floating in the same window)
+// was silently discarded and WebKit kept claiming the whole overlay,
+// physically covering the chat with an unclipped surface -- confirmed live:
+// requested width 812 on a 1280-wide window, actual GtkAllocation stayed
+// 1280 (see the "webkit ACTUAL allocation" trace above this function).
+// GtkOverlay's "get-child-position" signal exists exactly to bypass that
+// negotiation: when a handler is connected and returns TRUE, GTK uses the
+// GtkAllocation it supplies verbatim instead of computing one, so this is
+// the only reliable way to actually confine an overlay child's on-screen
+// footprint to less than its own idea of "natural" size.
+static gboolean get_child_position_cb(GtkOverlay* overlay, GtkWidget* widget,
+                                      GdkRectangle* allocation,
+                                      gpointer user_data) {
+  LinuxWebView* webview = static_cast<LinuxWebView*>(
+      g_object_get_data(G_OBJECT(widget), "linux-webview-self"));
+  if (webview == nullptr) {
+    return FALSE;
+  }
+  allocation->x = webview->frame_x;
+  allocation->y = webview->frame_y;
+  allocation->width = webview->frame_width;
+  allocation->height = webview->frame_height;
+  return TRUE;
+}
+
 static GtkOverlay* ensure_overlay(WebviewAllLinuxPlugin* self) {
   if (self->overlay != nullptr) {
     return self->overlay;
@@ -220,6 +251,8 @@ static GtkOverlay* ensure_overlay(WebviewAllLinuxPlugin* self) {
     self->overlay = GTK_OVERLAY(parent);
     g_signal_connect(view_widget, "size-allocate",
                      G_CALLBACK(flutter_view_size_allocate_cb), self);
+    g_signal_connect(self->overlay, "get-child-position",
+                     G_CALLBACK(get_child_position_cb), self);
     return self->overlay;
   }
 
@@ -256,6 +289,8 @@ static GtkOverlay* ensure_overlay(WebviewAllLinuxPlugin* self) {
 
   g_signal_connect(view_widget, "size-allocate",
                    G_CALLBACK(flutter_view_size_allocate_cb), self);
+  g_signal_connect(overlay, "get-child-position",
+                   G_CALLBACK(get_child_position_cb), self);
 
   self->overlay = GTK_OVERLAY(overlay);
   return self->overlay;
@@ -993,35 +1028,58 @@ static void instance_method_call_cb(FlMethodChannel* channel,
         static_cast<gint>(map_lookup_double(args, "height", 0));
     webview->visible = map_lookup_bool(args, "visible", TRUE) &&
                        webview->frame_width > 0 && webview->frame_height > 0;
-    gtk_widget_set_halign(widget, GTK_ALIGN_START);
-    gtk_widget_set_valign(widget, GTK_ALIGN_START);
-    gtk_widget_set_margin_start(widget, webview->frame_x);
-    gtk_widget_set_margin_top(widget, webview->frame_y);
+    // The actual position/size WebKit ends up painted at comes from
+    // get_child_position_cb (registered on the overlay), which reads
+    // frame_x/y/width/height straight off this struct and hands GTK a
+    // GdkRectangle it uses verbatim -- gtk_widget_set_size_request alone
+    // cannot shrink this widget below its self-reported "natural" size (see
+    // the comment on get_child_position_cb), which is why that override
+    // exists at all. But WebKit's own accelerated-compositing backing
+    // surface is sized from gtk_widget_size_allocate()'s internal minimum-
+    // size clamp, which falls back to this widget's OWN reported minimum
+    // whenever nothing has told it otherwise -- without a matching
+    // size_request here, that internal clamp fights the forced overlay
+    // allocation and WebKit ends up compositing into a surface sized
+    // differently than the rectangle it's actually clipped/positioned into,
+    // which paints as solid black. Keeping size_request in lockstep with
+    // the forced allocation keeps both numbers the same rectangle.
     gtk_widget_set_size_request(widget, webview->frame_width,
                                 webview->frame_height);
+    gtk_widget_queue_resize(GTK_WIDGET(webview->plugin->overlay));
+    // can_focus deliberately stays FALSE in both branches below, not just
+    // the hidden one. This webview loads JS-disabled, read-only .zim pages
+    // -- there is no text field inside it that legitimately needs GTK
+    // keyboard focus -- and GTK routes ALL key events to whichever widget
+    // last held focus, regardless of where the user is currently clicking.
+    // A shrunk-but-still-visible webview sitting next to the Flutter chat
+    // panel (so both are on screen at once) is a real, common state here,
+    // and if WebKit is left focusable it grabs keyboard focus the moment
+    // it's shown/mapped or clicked -- after that literally no TextField
+    // anywhere in the Flutter app (the chat composer included) receives
+    // another keystroke until something explicitly grabs focus back, which
+    // used to only happen on the fully-hidden path. Mouse/scroll/link-click
+    // interaction with the page is unaffected: that only needs `sensitive`.
+    gtk_widget_set_can_focus(widget, FALSE);
     if (webview->visible) {
       gtk_widget_set_sensitive(widget, TRUE);
-      gtk_widget_set_can_focus(widget, TRUE);
       gtk_overlay_set_overlay_pass_through(webview->plugin->overlay, widget,
                                            FALSE);
       gtk_widget_show(widget);
     } else {
       gtk_widget_hide(widget);
       gtk_widget_set_sensitive(widget, FALSE);
-      gtk_widget_set_can_focus(widget, FALSE);
       gtk_overlay_set_overlay_pass_through(webview->plugin->overlay, widget,
                                            TRUE);
-
-      // A native WebKit widget keeps GTK keyboard focus after it is hidden.
-      // Flutter then continues to receive pointer events but its text-input
-      // connection never becomes active, making every TextField in the app
-      // look read-only. Hand focus back to FlView whenever this overlay is
-      // detached (chat, drawer, route change, or disposal).
-      FlView* flutter_view =
-          fl_plugin_registrar_get_view(webview->plugin->registrar);
-      if (flutter_view != nullptr) {
-        gtk_widget_grab_focus(GTK_WIDGET(flutter_view));
-      }
+    }
+    // Always reassert focus onto FlView after touching this widget's
+    // show/hide/focusability state -- cheap, idempotent, and closes every
+    // path (show, hide, resize while visible) that could otherwise strand
+    // GTK keyboard focus on a widget that can no longer legitimately hold
+    // it.
+    FlView* flutter_view =
+        fl_plugin_registrar_get_view(webview->plugin->registrar);
+    if (flutter_view != nullptr) {
+      gtk_widget_grab_focus(GTK_WIDGET(flutter_view));
     }
     update_flutter_view_input_region(webview->plugin);
     respond(method_call, success_response());
@@ -1531,6 +1589,10 @@ static LinuxWebView* create_linux_webview(WebviewAllLinuxPlugin* self) {
                             GDK_POINTER_MOTION_MASK);
   gtk_widget_set_size_request(GTK_WIDGET(webview->web_view), 1, 1);
   gtk_widget_hide(GTK_WIDGET(webview->web_view));
+  // Read back by get_child_position_cb (registered on the overlay itself)
+  // to look up this widget's current frame_x/y/width/height.
+  g_object_set_data(G_OBJECT(webview->web_view), "linux-webview-self",
+                    webview);
   gtk_overlay_add_overlay(overlay, GTK_WIDGET(webview->web_view));
   gtk_overlay_set_overlay_pass_through(overlay, GTK_WIDGET(webview->web_view),
                                        TRUE);
