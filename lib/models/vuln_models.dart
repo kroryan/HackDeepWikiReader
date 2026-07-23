@@ -80,6 +80,8 @@ class CVEFinding {
   final List<String> usageFiles;
   final String aiImpactAnalysis;
   final String aiExploitability;
+  final String aiExploitVector;
+  final String aiExploitPlan;
   final String aiRemediation;
   final int aiPriority;
 
@@ -100,6 +102,8 @@ class CVEFinding {
     required this.usageFiles,
     required this.aiImpactAnalysis,
     required this.aiExploitability,
+    required this.aiExploitVector,
+    required this.aiExploitPlan,
     required this.aiRemediation,
     required this.aiPriority,
   });
@@ -122,6 +126,8 @@ class CVEFinding {
       usageFiles: (json['usage_files'] as List?)?.map((e) => e as String).toList() ?? [],
       aiImpactAnalysis: json['ai_impact_analysis'] as String? ?? '',
       aiExploitability: json['ai_exploitability'] as String? ?? '',
+      aiExploitVector: json['ai_exploit_vector'] as String? ?? '',
+      aiExploitPlan: json['ai_exploit_plan'] as String? ?? '',
       aiRemediation: json['ai_remediation'] as String? ?? '',
       aiPriority: json['ai_priority'] as int? ?? 3,
     );
@@ -174,6 +180,55 @@ class RemediationPlan {
   }
 }
 
+/// Attacker-perspective mirror of RemediationStep/RemediationPlan -- same
+/// shape, but `scenario` explains how a finding would actually be exploited
+/// instead of how to fix it. Mirrors api/vuln_common/exploitation.py.
+class ExploitationStep {
+  final String scenario;
+  final String severity;
+  final List<String> findingIds;
+  final List<String> findingTitles;
+  final String category;
+  final int affectedCount;
+
+  const ExploitationStep({
+    required this.scenario,
+    required this.severity,
+    required this.findingIds,
+    required this.findingTitles,
+    required this.category,
+    required this.affectedCount,
+  });
+
+  factory ExploitationStep.fromJson(Map<String, dynamic> json) {
+    return ExploitationStep(
+      scenario: json['scenario'] as String? ?? '',
+      severity: json['severity'] as String? ?? 'INFO',
+      findingIds: (json['finding_ids'] as List?)?.map((e) => e as String).toList() ?? [],
+      findingTitles: (json['finding_titles'] as List?)?.map((e) => e as String).toList() ?? [],
+      category: json['category'] as String? ?? '',
+      affectedCount: json['affected_count'] as int? ?? 0,
+    );
+  }
+}
+
+class ExploitationPlan {
+  final List<ExploitationStep> steps;
+  final String summary;
+  final int totalFindingsCovered;
+
+  const ExploitationPlan({required this.steps, required this.summary, required this.totalFindingsCovered});
+
+  factory ExploitationPlan.fromJson(Map<String, dynamic>? json) {
+    if (json == null) return const ExploitationPlan(steps: [], summary: '', totalFindingsCovered: 0);
+    return ExploitationPlan(
+      steps: (json['steps'] as List?)?.map((e) => ExploitationStep.fromJson(e as Map<String, dynamic>)).toList() ?? [],
+      summary: json['summary'] as String? ?? '',
+      totalFindingsCovered: json['total_findings_covered'] as int? ?? 0,
+    );
+  }
+}
+
 class VulnReport {
   final String repoUrl;
   final String repoType;
@@ -193,6 +248,7 @@ class VulnReport {
   final GraphData graph;
   final bool aiAnalyzed;
   final RemediationPlan remediationPlan;
+  final ExploitationPlan exploitationPlan;
 
   const VulnReport({
     required this.repoUrl,
@@ -213,6 +269,7 @@ class VulnReport {
     required this.graph,
     required this.aiAnalyzed,
     required this.remediationPlan,
+    required this.exploitationPlan,
   });
 
   factory VulnReport.fromJson(Map<String, dynamic> json) {
@@ -237,6 +294,7 @@ class VulnReport {
       graph: GraphData.fromJson(json['graph'] as Map<String, dynamic>?),
       aiAnalyzed: json['ai_analyzed'] as bool? ?? false,
       remediationPlan: RemediationPlan.fromJson(json['remediation_plan'] as Map<String, dynamic>?),
+      exploitationPlan: ExploitationPlan.fromJson(json['exploitation_plan'] as Map<String, dynamic>?),
     );
   }
 }

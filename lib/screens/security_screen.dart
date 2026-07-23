@@ -5,6 +5,7 @@ import '../models/web_vuln_models.dart';
 import '../models/wiki_models.dart';
 import '../providers/wiki_source.dart';
 import '../theme/app_theme.dart';
+import '../widgets/vuln_exploitation_view.dart';
 import '../widgets/vuln_graph_2d.dart';
 import '../widgets/vuln_remediation_plan_view.dart';
 
@@ -115,7 +116,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
       return const Center(child: Text('No vulnerability scan available for this wiki.'));
     }
     return DefaultTabController(
-      length: 5,
+      length: 6,
       child: Column(
         children: [
           _releaseSelector(),
@@ -128,6 +129,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
             Tab(text: 'Server'),
             Tab(text: 'Dependencies'),
             Tab(text: 'Solutions'),
+            Tab(text: 'Exploitation'),
             Tab(text: 'Graph'),
           ]),
           Expanded(
@@ -136,6 +138,21 @@ class _SecurityScreenState extends State<SecurityScreen> {
               _CveFindingsList(findings: report.serverFindings),
               _CveFindingsList(findings: report.dependencyFindings),
               VulnRemediationPlanView(plan: report.remediationPlan),
+              VulnExploitationView(
+                items: [
+                  for (final f in report.allFindings)
+                    ExploitationItem(
+                      id: f.id,
+                      title: '${f.id} — ${f.packageName}@${f.installedVersion}',
+                      severity: f.severity,
+                      category: f.category,
+                      vector: f.aiExploitVector,
+                      description: f.aiExploitability,
+                      plan: f.aiExploitPlan,
+                    ),
+                ],
+                summary: report.exploitationPlan.summary,
+              ),
               VulnGraph2DView(graph: report.graph, onNodeTap: (n) => _showCveNodeDetail(report, n.id)),
             ]),
           ),
@@ -150,7 +167,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
       return const Center(child: Text('No website security scan available for this wiki.'));
     }
     return DefaultTabController(
-      length: 6,
+      length: 7,
       child: Column(
         children: [
           _releaseSelector(),
@@ -165,6 +182,7 @@ class _SecurityScreenState extends State<SecurityScreen> {
             Tab(text: 'TLS'),
             Tab(text: 'Exposure'),
             Tab(text: 'Solutions'),
+            Tab(text: 'Exploitation'),
             Tab(text: 'Graph'),
           ]),
           Expanded(
@@ -174,6 +192,21 @@ class _SecurityScreenState extends State<SecurityScreen> {
               _WebFindingsList(findings: report.tlsFindings),
               _WebFindingsList(findings: report.exposureFindings),
               VulnRemediationPlanView(plan: report.remediationPlan),
+              VulnExploitationView(
+                items: [
+                  for (final f in report.allFindings)
+                    ExploitationItem(
+                      id: f.id,
+                      title: f.title,
+                      severity: f.severity,
+                      category: f.category,
+                      vector: f.aiExploitVector,
+                      description: f.aiExploitability,
+                      plan: f.aiExploitPlan,
+                    ),
+                ],
+                summary: report.exploitationPlan.summary,
+              ),
               VulnGraph2DView(graph: report.graph),
             ]),
           ),
@@ -309,10 +342,20 @@ void _showCveDetailSheet(BuildContext context, CVEFinding f) {
             Text('📊 Impact analysis', style: Theme.of(context).textTheme.labelLarge),
             Text(f.aiImpactAnalysis),
           ],
+          if (f.aiExploitVector.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text('🎯 Attack vector', style: Theme.of(context).textTheme.labelLarge),
+            Text(f.aiExploitVector),
+          ],
           if (f.aiExploitability.isNotEmpty) ...[
             const SizedBox(height: 12),
             Text('⚔️ Exploitability', style: Theme.of(context).textTheme.labelLarge),
             Text(f.aiExploitability),
+          ],
+          if (f.aiExploitPlan.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text('🗺️ Exploitation plan', style: Theme.of(context).textTheme.labelLarge),
+            Text(f.aiExploitPlan, style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
           ],
           if (f.aiRemediation.isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -350,6 +393,21 @@ void _showWebDetailSheet(BuildContext context, WebFinding f) {
             const SizedBox(height: 12),
             Text('Evidence', style: Theme.of(context).textTheme.labelLarge),
             Text(f.evidence, style: const TextStyle(fontFamily: 'monospace')),
+          ],
+          if (f.aiExploitVector.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text('🎯 Attack vector', style: Theme.of(context).textTheme.labelLarge),
+            Text(f.aiExploitVector),
+          ],
+          if (f.aiExploitability.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text('⚔️ Exploitability', style: Theme.of(context).textTheme.labelLarge),
+            Text(f.aiExploitability),
+          ],
+          if (f.aiExploitPlan.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text('🗺️ Exploitation plan', style: Theme.of(context).textTheme.labelLarge),
+            Text(f.aiExploitPlan, style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
           ],
           if (f.remediation.isNotEmpty) ...[
             const SizedBox(height: 12),

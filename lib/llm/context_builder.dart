@@ -168,6 +168,9 @@ String _summarizeVulnReport(VulnReport report) {
   if (report.remediationPlan.summary.isNotEmpty) {
     buffer.writeln('Remediation summary: ${report.remediationPlan.summary}');
   }
+  if (report.exploitationPlan.summary.isNotEmpty) {
+    buffer.writeln('Exploitation playbook summary: ${report.exploitationPlan.summary}');
+  }
   final findings = report.allFindings.take(_maxFindingsInPrompt);
   for (final f in findings) {
     buffer.writeln(
@@ -194,6 +197,9 @@ String _summarizeWebVulnReport(WebVulnReport report) {
   }
   if (report.remediationPlan.summary.isNotEmpty) {
     buffer.writeln('Remediation summary: ${report.remediationPlan.summary}');
+  }
+  if (report.exploitationPlan.summary.isNotEmpty) {
+    buffer.writeln('Exploitation playbook summary: ${report.exploitationPlan.summary}');
   }
   final findings = report.allFindings.take(_maxFindingsInPrompt);
   for (final f in findings) {

@@ -2,7 +2,7 @@
 /// on the web app, which mirror api/web_vuln_scanner/models.py.
 library;
 
-import 'vuln_models.dart' show GraphData, RemediationPlan;
+import 'vuln_models.dart' show ExploitationPlan, GraphData, RemediationPlan;
 
 class WebFinding {
   final String id;
@@ -22,6 +22,10 @@ class WebFinding {
   final bool aiDismissed;
   final String aiDismissReason;
   final String aiNotes;
+  // Same trio as CVEFinding, so both scan types share one exploitation UI.
+  final String aiExploitability;
+  final String aiExploitVector;
+  final String aiExploitPlan;
 
   const WebFinding({
     required this.id,
@@ -41,6 +45,9 @@ class WebFinding {
     required this.aiDismissed,
     required this.aiDismissReason,
     required this.aiNotes,
+    required this.aiExploitability,
+    required this.aiExploitVector,
+    required this.aiExploitPlan,
   });
 
   factory WebFinding.fromJson(Map<String, dynamic> json) {
@@ -62,6 +69,9 @@ class WebFinding {
       aiDismissed: json['ai_dismissed'] as bool? ?? false,
       aiDismissReason: json['ai_dismiss_reason'] as String? ?? '',
       aiNotes: json['ai_notes'] as String? ?? '',
+      aiExploitability: json['ai_exploitability'] as String? ?? '',
+      aiExploitVector: json['ai_exploit_vector'] as String? ?? '',
+      aiExploitPlan: json['ai_exploit_plan'] as String? ?? '',
     );
   }
 }
@@ -95,6 +105,7 @@ class WebVulnReport {
   final bool deepScanRan;
   final GraphData graph;
   final RemediationPlan remediationPlan;
+  final ExploitationPlan exploitationPlan;
 
   const WebVulnReport({
     required this.siteUrl,
@@ -118,6 +129,7 @@ class WebVulnReport {
     required this.deepScanRan,
     required this.graph,
     required this.remediationPlan,
+    required this.exploitationPlan,
   });
 
   factory WebVulnReport.fromJson(Map<String, dynamic> json) {
@@ -148,6 +160,7 @@ class WebVulnReport {
       deepScanRan: json['deep_scan_ran'] as bool? ?? false,
       graph: GraphData.fromJson(json['graph'] as Map<String, dynamic>?),
       remediationPlan: RemediationPlan.fromJson(json['remediation_plan'] as Map<String, dynamic>?),
+      exploitationPlan: ExploitationPlan.fromJson(json['exploitation_plan'] as Map<String, dynamic>?),
     );
   }
 }
